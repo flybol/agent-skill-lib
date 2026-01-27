@@ -191,19 +191,19 @@ def execute_run(paths: RunPaths, agent_mode: str | None = None) -> None:
             agent_mode = config.agent_mode
 
         update_status(
-            paths, state=RunState.RUNNING, progress=0, message="Starting analysis..."
+            paths, state=RunState.RUNNING, progress=0, message="开始分析..."
         )
         append_log(paths, f"Starting analysis with agent_mode={agent_mode}")
     except Exception as e:
         logger.error(f"Unexpected error during run: {e}")
         update_status(
-            paths, state=RunState.FAILED, message="Analysis failed", error=str(e)
+            paths, state=RunState.FAILED, message="分析失败", error=str(e)
         )
         append_log(paths, f"ERROR: Unexpected error - {e}")
         raise
     try:
         # Step 1: Extract frames (10-30% progress)
-        update_status(paths, progress=10, message="Extracting frames from video...")
+        update_status(paths, progress=10, message="正在提取视频帧...")
         append_log(paths, "Extracting frames...")
         frames_output = paths.run_dir / "frames"
         frames_output.mkdir(exist_ok=True)
@@ -219,14 +219,14 @@ def execute_run(paths: RunPaths, agent_mode: str | None = None) -> None:
         append_log(paths, f"Extracted {frames_data['frame_count']} frames")
 
         # Step 2: Compute features (30-50% progress)
-        update_status(paths, progress=30, message="Computing motion features...")
+        update_status(paths, progress=30, message="正在计算运动特征...")
         append_log(paths, "Computing features...")
         features_data = compute_features(frames_data, num_segments)
         write_features(paths, features_data)
         append_log(paths, f"Computed features for {num_segments} segments")
 
         # Step 3: Run LLM analysis (50-80% progress)
-        update_status(paths, progress=50, message="Running AI analysis...")
+        update_status(paths, progress=50, message="正在进行 AI 分析...")
         llm_model = getattr(config, "llm_model", "deepseek-chat")
         append_log(
             paths, f"Running LLM analysis (mode={agent_mode}, model={llm_model})..."
@@ -243,23 +243,23 @@ def execute_run(paths: RunPaths, agent_mode: str | None = None) -> None:
         append_log(paths, "LLM analysis completed")
 
         # Step 4: Assemble report (80-100% progress)
-        update_status(paths, progress=80, message="Assembling report...")
+        update_status(paths, progress=80, message="正在生成报告...")
         append_log(paths, "Assembling final report...")
         report = assemble_report(frames_data, features_data, llm_result)
         write_report(paths, report)
 
         # Complete
         update_status(
-            paths, state=RunState.DONE, progress=100, message="Analysis complete!"
+            paths, state=RunState.DONE, progress=100, message="分析完成"
         )
-        append_log(paths, "Analysis completed successfully")
+        append_log(paths, "分析成功完成")
 
     except FrameExtractionError as e:
         logger.error(f"Frame extraction failed: {e}")
         update_status(
             paths,
             state=RunState.FAILED,
-            message="Frame extraction failed",
+            message="视频帧提取失败",
             error=str(e),
         )
         append_log(paths, f"ERROR: Frame extraction failed - {e}")
@@ -270,7 +270,7 @@ def execute_run(paths: RunPaths, agent_mode: str | None = None) -> None:
         update_status(
             paths,
             state=RunState.FAILED,
-            message="Feature computation failed",
+            message="特征计算失败",
             error=str(e),
         )
         append_log(paths, f"ERROR: Feature computation failed - {e}")
@@ -279,7 +279,7 @@ def execute_run(paths: RunPaths, agent_mode: str | None = None) -> None:
     except Exception as e:
         logger.error(f"Unexpected error during run: {e}")
         update_status(
-            paths, state=RunState.FAILED, message="Analysis failed", error=str(e)
+            paths, state=RunState.FAILED, message="分析失败", error=str(e)
         )
         append_log(paths, f"ERROR: Unexpected error - {e}")
         raise PipelineError(f"Run execution failed: {e}") from e

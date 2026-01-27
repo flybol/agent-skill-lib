@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import time
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -81,21 +81,49 @@ def _read_json(path: Path) -> dict[str, Any]:
 def _pretty_state(state: str) -> str:
     s = (state or "unknown").lower()
     m = {
-        "pending": "pending",
-        "queued": "queued",
-        "running": "running",
-        "processing": "running",
-        "done": "done",
-        "success": "done",
-        "failed": "failed",
-        "error": "failed",
-        "unknown": "unknown",
+        "pending": "等待中",
+        "queued": "队列中",
+        "running": "运行中",
+        "processing": "运行中",
+        "done": "已完成",
+        "success": "已完成",
+        "failed": "失败",
+        "error": "失败",
+        "unknown": "未知",
     }
     return m.get(s, s)
 
 
-def _status_to_ui(status: dict[str, Any]) -> tuple[str, float, str, str]:
-    state = _pretty_state(str(status.get("state") or "unknown"))
+def _format_timestamp(ts: str) -> str:
+    """将时间戳格式化为中国上海时区。
+
+    Args:
+        ts: ISO 8601 格式的时间戳字符串
+
+    Returns:
+        格式化后的时间字符串，如 "2026-01-27 23:02:06"
+    """
+    if not ts:
+        return ""
+
+    try:
+        # 解析 ISO 8601 时间戳
+        dt = datetime.fromisoformat(ts)
+
+        # 转换为中国上海时区（UTC+8）
+        # 使用 timezone.timedelta 模拟时区偏移
+        tz_offset = timezone(timedelta(hours=8))
+        dt_shanghai = dt.astimezone(tz_offset)
+
+        return dt_shanghai.strftime("%Y-%m-%d %H:%M:%S")
+    except Exception:
+        # 解析失败，返回原始字符串
+        return ts
+
+
+def _status_to_ui(status: dict[str, Any]) -> tuple[str, str, float, str, str]:
+    raw_state = str(status.get("state") or "unknown")
+    pretty_state = _pretty_state(raw_state)
     prog = status.get("progress", 0)
     try:
         prog_f = float(prog)
@@ -108,21 +136,22 @@ def _status_to_ui(status: dict[str, Any]) -> tuple[str, float, str, str]:
     prog_f = max(0.0, min(1.0, prog_f))
 
     msg = str(status.get("message") or "")
-    ts = str(
+    ts_raw = str(
         status.get("completed_at")
         or status.get("started_at")
         or status.get("created_at")
         or ""
     )
-    return state, prog_f, msg, ts
+    ts = _format_timestamp(ts_raw)
+    return raw_state, pretty_state, prog_f, msg, ts
 
 
 def _should_auto_refresh(state: str) -> bool:
-    return _pretty_state(state) in {"queued", "pending", "running", "unknown"}
+    return state.lower() in {"queued", "pending", "running", "processing", "unknown"}
 
 
 def _calc_refresh_interval_ms(state: str, prog: float, *, unchanged_hits: int) -> int:
-    s = _pretty_state(state)
+    s = state.lower()
     if s in {"queued", "pending"}:
         return AUTO_REFRESH_SLOW_MS
     if unchanged_hits >= 6:
@@ -136,8 +165,7 @@ def _list_run_dirs(limit: int = RECENT_LIMIT) -> list[Path]:
     """列出当前用户的任务目录。
 
     多用户隔离后：
-    1. 扫描用户子目录 data/runs/{user_id}/ 中的新任务
-    2. 兼容扫描根目录 data/runs/ 中的旧任务（无 user_id 前缀的目录）
+    1. 扫描用户子目录 data/runs/{user_id}/ 中的任务
 
     Returns:
         按修改时间倒序排列的任务目录列表
@@ -149,7 +177,7 @@ def _list_run_dirs(limit: int = RECENT_LIMIT) -> list[Path]:
     # 需要跳过的目录名称（非任务目录）
     SKIP_DIR_NAMES = {"frames", "input", "segments", "output", "__pycache__", ".git"}
 
-    # 1. 扫描当前用户的子目录（新任务）
+    # 扫描当前用户的子目录
     if user_id:
         user_dir = RUNS_DIR / user_id
         logger.info(f"Scanning user directory: {user_dir}, exists: {user_dir.exists()}")
@@ -165,26 +193,11 @@ def _list_run_dirs(limit: int = RECENT_LIMIT) -> list[Path]:
                         runs.append(p)
                         logger.info(f"Found task directory: {p}")
         else:
-            logger.warning(f"User directory does not exist: {user_dir}")
+            logger.info(
+                f"User directory does not exist: {user_dir} (new user, no tasks yet)"
+            )
     else:
         logger.warning("user_id is empty, cannot scan user directory")
-
-    # 2. 扫描根目录中的旧任务（兼容）
-    # 旧任务目录名格式：{task_name}__{run_id}，不包含 user_ 前缀
-    if RUNS_DIR.exists():
-        for p in RUNS_DIR.iterdir():
-            if p.is_dir():
-                # 跳过用户子目录本身和系统目录
-                if p.name.startswith("user_") or p.name in SKIP_DIR_NAMES:
-                    continue
-                # 验证是有效的任务目录（包含 status.json 或 input/frames 子目录）
-                if (
-                    (p / "status.json").exists()
-                    or (p / "input").exists()
-                    or (p / "frames").exists()
-                ):
-                    runs.append(p)
-                    logger.info(f"Found legacy task directory: {p}")
 
     # 按修改时间倒序排序
     runs.sort(key=lambda p: p.stat().st_mtime, reverse=True)
@@ -890,8 +903,8 @@ def _is_running_from_selected() -> bool:
         return False
     paths = _get_run_paths(run_dir)
     status = _read_json(paths.status_json)
-    state, _prog, _msg, _ts = _status_to_ui(status)
-    return state in {"queued", "pending", "running", "unknown"}
+    raw_state, _pretty_state, _prog, _msg, _ts = _status_to_ui(status)
+    return raw_state in {"queued", "pending", "running", "processing", "unknown"}
 
 
 def _render_queue_status() -> None:
@@ -931,8 +944,8 @@ def _render_queue_status() -> None:
             try:
                 paths = _get_run_paths(task_dir)
                 status = _read_json(paths.status_json)
-                state, _prog, _msg, _ts = _status_to_ui(status)
-                if state == "queued":
+                raw_state, _pretty_state, _prog, _msg, _ts = _status_to_ui(status)
+                if raw_state == "queued":
                     # 任务仍在队列中，队列位置大约是 queue_size
                     # 注意：这只是估算，因为无法直接访问队列内容
                     my_task_position = queue_size
@@ -975,82 +988,82 @@ def _render_queue_status() -> None:
 
 
 # =========================
-# UI：Sidebar 操作面板
-# 目标：默认无需用户操作（上传 + 开始分析即可）
-# 保留能力：1) 任务名称 2) 分析参数 3) 历史任务
+# 用户 ID 辅助函数
 # =========================
-def render_sidebar_panel() -> None:
-    ss = st.session_state
+def _update_user_id_in_browser(user_id: str) -> None:
+    """将 user_id 同步到 localStorage 和 Cookie。
 
-    # 初始化用户 ID（用于多用户隔离）
-    # 使用文件持久化，确保关闭浏览器后仍能识别用户
-    import uuid
-
-    # 每次都优先从 URL 查询参数获取 user_id
-    query_params = st.query_params
-    url_user_id = query_params.get("user_id")
-
-    if url_user_id:
-        # URL 中有 user_id，优先使用（最可靠）
-        if ss.get("user_id") != url_user_id:
-            ss["user_id"] = url_user_id
-            logger.info(f"Loaded user_id from URL: {ss['user_id']}")
-    elif ss.get("user_id"):
-        # URL 中没有，但 session_state 中有，使用 session_state 的值
-        # 并更新 URL
-        ss_user_id = ss.get("user_id")
-        query_params["user_id"] = ss_user_id
-        logger.info(f"Using user_id from session_state: {ss_user_id}, updated URL")
-    else:
-        # 既没有 URL 参数，也没有 session_state，尝试从文件恢复
-        # 扫描 data/users/ 目录，找到最近访问的用户
-        all_users = storage.list_all_users()
-        if all_users:
-            # 使用最近访问的用户
-            last_user = all_users[0]
-            ss["user_id"] = last_user.user_id
-            query_params["user_id"] = last_user.user_id
-            logger.info(f"Restored user_id from file: {last_user.user_id}")
-        else:
-            # 没有任何用户记录，生成新的 user_id
-            ss["user_id"] = f"user_{uuid.uuid4().hex[:8]}"
-            query_params["user_id"] = ss["user_id"]
-            logger.info(f"Generated new user_id: {ss['user_id']}")
-
-    # 加载或创建用户记录（更新最后访问时间）
-    user_record = storage.get_or_create_user(ss["user_id"])
-    ss["user_record"] = user_record
-
-    # 使用 JavaScript 设置 cookie 和 localStorage（辅助存储）
-    # 这样即使 Streamlit 关闭，浏览器仍能识别用户
+    Args:
+        user_id: 用户 ID
+    """
     js_code = f"""
     <script>
     (function() {{
-        // 设置 cookie（365 天有效）
-        const cookieName = 'coachagent_user_id';
-        const cookieValue = '{ss["user_id"]}';
+        const key = 'coachagent_user_id';
+        const value = '{user_id}';
+
+        // 优先存储到 localStorage（更可靠）
+        try {{
+            localStorage.setItem(key, value);
+            console.log('User ID stored to localStorage:', value);
+        }} catch (e) {{
+            console.warn('Failed to store to localStorage:', e);
+        }}
+
+        // 同时设置 Cookie（备用）
         const days = 365;
         const date = new Date();
         date.setTime(date.getTime() + (days * 24 * 60 * 60 * 1000));
         const expires = '; expires=' + date.toUTCString();
-        document.cookie = cookieName + '=' + cookieValue + expires + '; path=/';
-        console.log('User ID stored to cookie:', cookieValue);
+        document.cookie = key + '=' + value + expires + '; path=/; SameSite=Lax';
+        console.log('User ID stored to cookie:', value);
 
-        // 同时存储到 localStorage（备用）
-        localStorage.setItem('coachagent_user_id', cookieValue);
-
-        // 确保 URL 中有 user_id
+        // 更新 URL 参数（保持一致性）
         const urlParams = new URLSearchParams(window.location.search);
-        if (!urlParams.get('user_id')) {{
-            urlParams.set('user_id', cookieValue);
+        if (urlParams.get('user_id') !== value) {{
+            urlParams.set('user_id', value);
             const newUrl = window.location.pathname + '?' + urlParams.toString();
             window.history.replaceState({{path: newUrl}}, '', newUrl);
-            console.log('URL updated with user_id:', cookieValue);
         }}
     }})();
     </script>
     """
     components.html(js_code, height=0)
+
+
+# =========================
+# UI：Sidebar 操作面板
+# =========================
+def render_sidebar_panel() -> None:
+    ss = st.session_state
+
+    # 初始化用户 ID（用于多用户隔离）
+    # 策略：优先使用 session_state，其次使用 URL 参数（已由 JavaScript 从 Cookie 同步）
+    # 最后才生成新的 user_id
+    import uuid
+
+    ss_user_id = ss.get("user_id", "")
+    query_params = st.query_params
+    url_user_id = query_params.get("user_id", "")
+
+    if ss_user_id:
+        # session_state 中已有 user_id，使用它
+        # 更新 URL 以保持一致性
+        if query_params.get("user_id") != ss_user_id:
+            query_params["user_id"] = ss_user_id
+        logger.info(f"Using existing user_id from session_state: {ss_user_id}")
+    elif url_user_id:
+        # session_state 中没有 user_id，但 URL 中有（由 JavaScript 从 Cookie 同步）
+        # 使用 URL 中的 user_id 恢复 session_state
+        ss["user_id"] = url_user_id
+        logger.info(f"Restored user_id from URL (synced from cookie): {url_user_id}")
+    else:
+        # session_state 和 URL 都没有 user_id，生成新的
+        new_user_id = f"user_{uuid.uuid4().hex[:8]}"
+        ss["user_id"] = new_user_id
+        query_params["user_id"] = new_user_id
+        logger.info(f"Generated new user_id: {new_user_id}")
+        _update_user_id_in_browser(new_user_id)
 
     ss.setdefault("selected_run_dir", "")
     ss.setdefault("task_name", datetime.now().strftime("%Y%m%d_%H%M"))
@@ -1149,14 +1162,14 @@ def render_sidebar_panel() -> None:
             try:
                 paths = _get_run_paths(p)
                 status = _read_json(paths.status_json)
-                state, _prog, _m, _ts = _status_to_ui(status)
+                raw_state, _pretty_state, _prog, _m, _ts = _status_to_ui(status)
                 dot = {
                     "done": "🟢",
                     "running": "🟡",
                     "queued": "🟡",
                     "pending": "🟡",
                     "failed": "🔴",
-                }.get(state, "⚪")
+                }.get(raw_state, "⚪")
 
                 # 安全获取 task_name 和 run_id
                 # 支持新旧两种目录格式：
@@ -1219,7 +1232,7 @@ def render_sidebar_panel() -> None:
                     run_dir = Path(ss["selected_run_dir"])
                     paths = _get_run_paths(run_dir)
                     status = _read_json(paths.status_json)
-                    state, prog, msg, ts = _status_to_ui(status)
+                    raw_state, pretty_state, prog, msg, ts = _status_to_ui(status)
 
                     # 安全获取 task_name（支持新旧格式）
                     parts = run_dir.name.split("__")
@@ -1229,7 +1242,7 @@ def render_sidebar_panel() -> None:
                         task_name = status.get("task_name") or run_dir.name
 
                     st.markdown(f"**当前任务**：{task_name}")
-                    st.markdown(f"**状态**：`{state}`")
+                    st.markdown(f"**状态**：`{pretty_state}`")
                     st.progress(prog)
                     if msg:
                         st.caption(msg)
@@ -1314,9 +1327,33 @@ span[data-testid="stFileUploaderFileErrorMessage"]::after{
             unsafe_allow_html=True,
         )
 
+        # 添加 CSS 隐藏不需要的文件选择器选项
+        st.markdown(
+            """
+        <style>
+/* 隐藏文件选择器中的云存储和摄像头选项 */
+[data-testid="stFileUploader"] button[data-kind="header"],
+[data-testid="stFileUploader"] .camera-button,
+[data-testid="stFileUploader"] [aria-label*="Camera"],
+[data-testid="stFileUploader"] [aria-label*="摄像头"],
+[data-testid="stFileUploader"] [aria-label*="拍摄"],
+[data-testid="stFileUploader"] svg[data-testid="stVideoCameraIcon"] {
+    display: none !important;
+}
+
+/* 隐藏可能的"拍照"或"录制"相关按钮 */
+[data-testid="stFileUploader"] button:has(svg[data-testid="stVideoCameraIcon"]),
+[data-testid="stFileUploader"] button:has(svg[data-testid="stCameraIcon"]) {
+    display: none !important;
+}
+</style>
+        """,
+            unsafe_allow_html=True,
+        )
+
         uploaded = st.file_uploader(
             "选择视频文件",
-            type=[e.lstrip(".") for e in SUPPORTED_VIDEO_EXTS],
+            type=["mp4", "mov", "avi", "mkv", "webm"],
             accept_multiple_files=False,
         )
         if uploaded is not None:
@@ -1472,12 +1509,12 @@ def render_status_strip(run_dir: Path) -> None:
 
     paths = _get_run_paths(run_dir)
     status = _read_json(paths.status_json)
-    state, prog, msg, ts = _status_to_ui(status)
+    raw_state, pretty_state, prog, msg, ts = _status_to_ui(status)
     task_name = status.get("task_name") or run_dir.name.split("__")[0]
     video = storage.get_video_path(paths)
     video_name = video.name if video else "(未找到视频)"
 
-    sig = f"{state}|{prog:.3f}|{msg}|{ts}"
+    sig = f"{raw_state}|{prog:.3f}|{msg}|{ts}"
     if sig != ss[f"{key_prefix}::last_sig"]:
         ss[f"{key_prefix}::last_sig"] = sig
         ss[f"{key_prefix}::last_change_ts"] = time.time()
@@ -1492,28 +1529,28 @@ def render_status_strip(run_dir: Path) -> None:
     enabled = bool(ss.get("auto_refresh_enabled", False))
 
     # 完成/失败：无需自动刷新（即使开关开着，也不会再触发）
-    if state in {"done", "failed"}:
+    if raw_state in {"done", "failed"}:
         enabled = False
 
     # Toast 一次
-    if state in {"done", "failed"} and not ss.get(
+    if raw_state in {"done", "failed"} and not ss.get(
         f"{key_prefix}::completed_toast", False
     ):
         ss[f"{key_prefix}::completed_toast"] = True
         st.toast(
-            "分析完成" if state == "done" else "❌ 分析失败（请查看日志）",
-            icon="✅" if state == "done" else "❌",
+            "分析完成" if raw_state == "done" else "❌ 分析失败（请查看日志）",
+            icon="✅" if raw_state == "done" else "❌",
         )
 
-    with st.container(border=True):
+    with st.container(border=False):
         left, right = st.columns([0.72, 0.28], vertical_alignment="center")
         with left:
             st.markdown(f"**当前任务**：{task_name}  \n**视频**：{video_name}")
-            st.caption(f"状态：{state}")
+            st.caption(f"状态：{pretty_state}")
             if ts:
                 st.caption(f"更新时间：{ts}")
 
-            if enabled and _should_auto_refresh(state):
+            if enabled and _should_auto_refresh(raw_state):
                 if seconds_since_change >= AUTO_REFRESH_STALL_SEC:
                     st.warning(
                         f"状态已 {int(seconds_since_change)}s 无变化，可能卡住（建议查看日志/重跑）。"
@@ -1531,9 +1568,9 @@ def render_status_strip(run_dir: Path) -> None:
         if msg:
             st.caption(msg)
 
-    if enabled and _should_auto_refresh(state):
+    if enabled and _should_auto_refresh(raw_state):
         interval_ms = _calc_refresh_interval_ms(
-            state, prog, unchanged_hits=unchanged_hits
+            raw_state, prog, unchanged_hits=unchanged_hits
         )
         _ui_autorefresh(
             interval_ms=interval_ms, key=f"right_autorefresh_{run_dir.name}"
@@ -1574,7 +1611,8 @@ def render_results_tabs(run_dir: Path) -> None:
                 # 1) 一句话总结（教练视角）
                 one_sentence = (analysis.get("one_sentence") or "").strip()
                 if one_sentence:
-                    st.success(one_sentence)
+                    st.markdown("#### 总结")
+                    st.write(one_sentence)
 
                 st.divider()
 
@@ -1856,8 +1894,8 @@ def render_results_tabs(run_dir: Path) -> None:
     if debug_mode:
         with tabs[3]:
             status = _read_json(paths.status_json)
-            state, _, msg, _ = _status_to_ui(status)
-            if state == "failed":
+            raw_state, _pretty_state, msg, _ = _status_to_ui(status)
+            if raw_state == "failed":
                 st.error(msg or "任务失败（请查看日志）")
             logs = _load_logs(paths)
             if not logs:
@@ -1872,33 +1910,41 @@ def render_results_tabs(run_dir: Path) -> None:
 # =========================
 def render_main_panel() -> None:
     ss = st.session_state
+
+    # 上传视频区域（独占一行）
     render_upload_and_start()
 
+    # 任务状态区域（独占一行）
     st.markdown("### 任务状态")
 
     selected = ss.get("selected_run_dir", "")
     if not selected:
-        st.info("右侧将显示训练报告与分析结果。请先上传视频，或在左侧选择历史任务。")
-        return
+        st.info("请先上传视频，或在左侧选择历史任务。")
+    else:
+        run_dir = Path(selected)
+        if not run_dir.exists():
+            st.warning("任务目录不存在，请重新选择。")
+            ss["selected_run_dir"] = ""
+        else:
+            render_status_strip(run_dir)
 
-    run_dir = Path(selected)
-    if not run_dir.exists():
-        st.warning("选中的任务目录不存在。请重新选择。")
-        ss["selected_run_dir"] = ""
-        return
-
-    with st.container(key=f"right_panel_{run_dir.name}"):
-        render_status_strip(run_dir)
-        render_results_tabs(run_dir)
+    # 底部：分析结果（全宽）
+    if selected:
+        run_dir = Path(selected)
+        if run_dir.exists():
+            with st.container(key=f"results_panel_{run_dir.name}"):
+                render_results_tabs(run_dir)
 
 
 def render_app() -> None:
-    # 页面加载时，从 cookie 读取 user_id 并更新 URL
-    # 这样可以确保关闭浏览器后重新打开时仍然能识别用户
+    # 页面加载时立即执行：从 localStorage/Cookie 读取 user_id 并同步到 URL
+    # 使用 st.markdown + unsafe_allow_html 确保脚本在页面头部立即执行
+    # 如需同步则刷新页面，使 Python 端能读取到新的 URL 参数
     init_js = """
     <script>
     (function() {
-        // 从 cookie 读取 user_id
+        'use strict';
+
         function getCookie(name) {
             const value = "; " + document.cookie;
             const parts = value.split("; " + name + "=");
@@ -1906,34 +1952,63 @@ def render_app() -> None:
             return null;
         }
 
-        const userId = getCookie('coachagent_user_id');
+        const key = 'coachagent_user_id';
+        // 优先从 localStorage 读取，其次 Cookie
+        let userId = null;
+        try {
+            userId = localStorage.getItem(key);
+        } catch (e) {
+            console.warn('localStorage not available:', e);
+        }
+        if (!userId) {
+            userId = getCookie(key);
+        }
+
         const urlParams = new URLSearchParams(window.location.search);
         const urlUserId = urlParams.get('user_id');
 
-        // 如果 cookie 中有 user_id，但 URL 中没有，更新 URL 并刷新
+        // 场景 1: 有存储的 user_id，但 URL 中没有 → 同步到 URL 并刷新
         if (userId && !urlUserId) {
             urlParams.set('user_id', userId);
             const newUrl = window.location.pathname + '?' + urlParams.toString();
             window.history.replaceState({path: newUrl}, '', newUrl);
-            console.log('URL updated from cookie:', userId, ', reloading...');
-            // 刷新页面以应用新的 URL 参数
+            console.log('URL synced from storage, reloading...', userId);
             setTimeout(function() {
                 window.location.reload();
-            }, 100);
+            }, 50);
         }
-        // 如果 URL 中有 user_id，确保 cookie 也有（同步）
-        else if (urlUserId && urlUserId !== userId) {
-            const days = 365;
-            const date = new Date();
-            date.setTime(date.getTime() + (days * 24 * 60 * 60 * 1000));
-            const expires = '; expires=' + date.toUTCString();
-            document.cookie = 'coachagent_user_id=' + urlUserId + expires + '; path=/';
-            console.log('Cookie updated from URL:', urlUserId);
+        // 场景 2: URL 中有 user_id，但存储中没有 → 清除 URL 参数（可能是分享的 URL）
+        else if (!userId && urlUserId) {
+            urlParams.delete('user_id');
+            const newUrl = window.location.pathname + (urlParams.toString() ? '?' + urlParams.toString() : '');
+            window.history.replaceState({path: newUrl}, '', newUrl);
+            console.log('URL parameter cleared (shared URL), reloading...');
+            setTimeout(function() {
+                window.location.reload();
+            }, 50);
+        }
+        // 场景 3: 都有 user_id，但值不同 → 使用存储的值覆盖 URL
+        else if (userId && urlUserId && userId !== urlUserId) {
+            urlParams.set('user_id', userId);
+            const newUrl = window.location.pathname + '?' + urlParams.toString();
+            window.history.replaceState({path: newUrl}, '', newUrl);
+            console.log('URL overwritten with storage, reloading...', userId, '(was:', urlUserId + ')');
+            setTimeout(function() {
+                window.location.reload();
+            }, 50);
+        }
+        // 场景 4: 都有且值相同 → 无需操作
+        else if (userId && urlUserId && userId === urlUserId) {
+            console.log('User ID from storage matches URL:', userId);
+        }
+        // 场景 5: 都没有 → 首次访问，无需操作
+        else {
+            console.log('No user ID found (first visit)');
         }
     })();
     </script>
     """
-    components.html(init_js, height=0)
+    st.markdown(init_js, unsafe_allow_html=True)
 
     st.set_page_config(
         page_title=APP_TITLE,
