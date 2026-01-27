@@ -1,0 +1,18 @@
+[server]
+runOnSave = true
+fileWatcherType = "auto"
+headless = true
+port = 8501
+maxUploadSize = 50
+folderWatchBlacklist = ["data"]
+[browser]
+gatherUsageStats = false
+
+[client]
+toolbarMode = "developer"
+showErrorDetails = "full"
+
+[logger]
+level = "info"
+[theme]
+base = "dark"

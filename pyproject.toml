@@ -1,0 +1,17 @@
+[project]
+name = "agent-skill-lib"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "imageio>=2.37.2",
+    "imageio-ffmpeg>=0.6.0",
+    "langchain>=1.2.7",
+    "langchain-deepseek>=1.0.1",
+    "pdfplumber>=0.11.9",
+    "python-dotenv>=1.2.1",
+    "streamlit>=1.53.1",
+    "streamlit-autorefresh>=1.0.1",
+    "zai-sdk>=0.2.1",
+]

@@ -1,0 +1,35 @@
+{
+    // 使用 IntelliSense 了解相关属性。 
+    // 悬停以查看现有属性的描述。
+    // 欲了解更多信息，请访问: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Streamlit: app.py (uv)",
+            "type": "python",
+            "request": "launch",
+            "module": "streamlit",
+            "args": [
+                "run",
+                "${workspaceFolder}/src/app.py",
+                "--server.port",
+                "8501",
+                "--server.address",
+                "127.0.0.1",
+                "--server.headless",
+                "true",
+                "--browser.gatherUsageStats",
+                "false"
+            ],
+            "console": "integratedTerminal",
+            "justMyCode": true,
+            "env": {
+                "PYTHONUTF8": "1",
+                "PYTHONUNBUFFERED": "1",
+                "STREAMLIT_SERVER_HEADLESS": "true",
+                "STREAMLIT_BROWSER_GATHER_USAGE_STATS": "false",
+                "ZHIPU_API_KEY": "5a95c52ae1f9457da5994ec4bd1a582a.e3odfSiCz17q3RSY"
+            }
+        },
+    ]
+}
