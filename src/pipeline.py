@@ -9,7 +9,7 @@ import shutil
 import threading
 from pathlib import Path
 
-from constants import AGENT_MODE_REAL, RunState, DEFAULT_SEGMENTS, POSE_MAX_FRAMES
+from constants import AGENT_MODE_REAL, DEFAULT_LLM_MODEL, DEFAULT_SEGMENTS, POSE_MAX_FRAMES, RunState
 from errors import PipelineError, StepError
 from storage import (
     RunPaths,
@@ -33,7 +33,6 @@ from steps import (
     FeatureComputationError,
 )
 from utils import generate_id
-from constants import DEFAULT_LLM_MODEL  # 顶部加 import
 
 logger = logging.getLogger(__name__)
 

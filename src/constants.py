@@ -9,7 +9,6 @@ from pathlib import Path
 # ============================================================================
 
 APP_TITLE = "CoachAgent - Sports Video Analysis"
-APP_SUBTITLE = "AI-powered sports technique analysis"
 
 
 # ============================================================================
@@ -92,10 +91,6 @@ IMPROVEMENTS_COUNT = 3
 # ============================================================================
 # UI Refresh Constants
 # ============================================================================
-
-PROGRESS_REFRESH_INTERVAL_MS = 1000  # Refresh progress every 1 second
-AUTO_REFRESH_THRESHOLD_SEC = 30  # Stop auto-refresh after 30 seconds idle
-
 
 # constants.py
 

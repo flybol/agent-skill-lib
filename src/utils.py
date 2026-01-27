@@ -160,11 +160,6 @@ def get_file_extension(path: Path) -> str:
     return path.suffix.lower()
 
 
-def has_extension(path: Path, extensions: set[str]) -> bool:
-    """Check if path has any of the given extensions."""
-    return get_file_extension(path) in {e.lower() for e in extensions}
-
-
 # ============================================================================
 # Misc Helpers
 # ============================================================================
@@ -177,16 +172,6 @@ def generate_id(prefix: str = "", length: int = 8) -> str:
     chars = string.ascii_lowercase + string.digits
     suffix = ''.join(random.choices(chars, k=length))
     return f"{prefix}{suffix}" if prefix else suffix
-
-
-def humanize_number(n: int | float) -> str:
-    """Format number with commas."""
-    return f"{n:,}"
-
-
-def clamp(value: int | float, min_val: int | float, max_val: int | float) -> int | float:
-    """Clamp value between min and max."""
-    return max(min_val, min(value, max_val))
 
 
 # ============================================================================

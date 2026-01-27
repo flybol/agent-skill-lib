@@ -31,16 +31,6 @@ class PipelineError(CoachAgentError):
     pass
 
 
-class InvalidStatusError(PipelineError):
-    """Invalid state transition or operation for current status."""
-    pass
-
-
-class RunAlreadyExistsError(PipelineError):
-    """Run with same task_name and run_id already exists."""
-    pass
-
-
 class StepError(CoachAgentError):
     """Error during a specific step execution."""
     pass
@@ -58,11 +48,6 @@ class FeatureComputationError(StepError):
 
 class AgentError(CoachAgentError):
     """Error related to LLM input/output parsing or invocation."""
-    pass
-
-
-class PromptConstructionError(AgentError):
-    """Failed to construct LLM prompt."""
     pass
 
 

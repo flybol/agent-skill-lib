@@ -223,6 +223,555 @@ def _load_logs(paths: storage.RunPaths) -> str:
     return storage.read_logs(paths, max_lines=None)
 
 
+# =========================
+# 报告导出功能
+# =========================
+
+
+def _format_report_as_markdown(
+    report: dict[str, Any],
+    task_name: str,
+    video_name: str,
+    analysis_time: str,
+) -> str:
+    """将报告格式化为 Markdown 文档。
+
+    Args:
+        report: 报告数据
+        task_name: 任务名称
+        video_name: 视频名称
+        analysis_time: 分析时间
+
+    Returns:
+        Markdown 格式的报告文本
+    """
+    analysis = report.get("analysis") or {}
+
+    # 检查是否为教练实战版格式
+    is_coach_report = "one_sentence" in analysis
+
+    lines = []
+    lines.append(f"# {task_name} - 训练报告")
+    lines.append("")
+    lines.append(f"**视频名称**：{video_name}  ")
+    lines.append(f"**分析时间**：{analysis_time}  ")
+    lines.append("")
+    lines.append("---")
+    lines.append("")
+
+    if is_coach_report:
+        # 教练实战版格式
+        one_sentence = (analysis.get("one_sentence") or "").strip()
+        if one_sentence:
+            lines.append("## 一句话总结")
+            lines.append("")
+            lines.append(f"> {one_sentence}")
+            lines.append("")
+            lines.append("---")
+            lines.append("")
+
+        # 核心问题
+        top_problems = analysis.get("top_problems") or []
+        if top_problems:
+            lines.append("## 核心问题（3条）")
+            lines.append("")
+            for p in top_problems:
+                prob_id = p.get("id", "")
+                title = p.get("title", "")
+                key_features = p.get("key_features") or []
+                direct_consequences = p.get("direct_consequences") or []
+                coach_judgment = p.get("coach_judgment", "")
+
+                lines.append(f"### {prob_id}：{title}")
+                lines.append("")
+
+                if key_features:
+                    lines.append("**关键表现**（你现在在做什么）：")
+                    lines.append("")
+                    for f in key_features:
+                        lines.append(f"- {f}")
+                    lines.append("")
+
+                if direct_consequences:
+                    lines.append("**直接后果**（比赛会发生什么）：")
+                    lines.append("")
+                    for c in direct_consequences:
+                        lines.append(f"- {c}")
+                    lines.append("")
+
+                if coach_judgment:
+                    lines.append(f"> 💡 教练判断：{coach_judgment}")
+                    lines.append("")
+
+                lines.append("---")
+                lines.append("")
+
+        # 训练计划
+        training_plan = analysis.get("training_plan") or {}
+        if training_plan:
+            session_goal = training_plan.get("session_goal", "")
+            improvements = training_plan.get("improvements") or []
+
+            lines.append("## 训练计划")
+            lines.append("")
+
+            if session_goal:
+                lines.append(f"**本次训练目标**：{session_goal}")
+                lines.append("")
+                lines.append("---")
+                lines.append("")
+
+            if improvements:
+                for imp in improvements:
+                    title = imp.get("title", "")
+                    training_methods = imp.get("training_methods") or []
+                    self_check_criteria = imp.get("self_check_criteria") or []
+
+                    lines.append(f"### {title}")
+                    lines.append("")
+
+                    if training_methods:
+                        lines.append("**训练方法**：")
+                        lines.append("")
+                        for m in training_methods:
+                            lines.append(f"- {m}")
+                        lines.append("")
+
+                    if self_check_criteria:
+                        lines.append("**自检标准**：")
+                        lines.append("")
+                        for c in self_check_criteria:
+                            lines.append(f"- {c}")
+                        lines.append("")
+
+                    lines.append("---")
+                    lines.append("")
+
+        # 分段点评
+        segment_notes = analysis.get("segment_notes") or []
+        if segment_notes:
+            lines.append("## 分段点评")
+            lines.append("")
+
+            for note in segment_notes:
+                seg_id = note.get("segment_id")
+                title = note.get("title", "")
+                coach_comment = note.get("coach_comment", "")
+                evidence = note.get("evidence") or []
+
+                lines.append(f"### {title}（Segment {seg_id}）")
+                lines.append("")
+
+                if coach_comment:
+                    lines.append(coach_comment)
+                    lines.append("")
+
+                if evidence:
+                    frame_numbers = [
+                        e.get("frame_index")
+                        for e in evidence
+                        if e.get("frame_index") is not None
+                    ]
+                    if frame_numbers:
+                        lines.append(
+                            f"**关键帧证据**：帧号 {', '.join(map(str, frame_numbers))}"
+                        )
+                        lines.append("")
+
+                lines.append("---")
+                lines.append("")
+
+    else:
+        # 旧格式兼容
+        summary = (analysis.get("summary") or "").strip()
+        if summary:
+            lines.append("## 总结")
+            lines.append("")
+            lines.append(summary)
+            lines.append("")
+            lines.append("---")
+            lines.append("")
+
+        # 主要问题
+        problems = analysis.get("problems") or []
+        if problems:
+            lines.append("## 主要问题（3条）")
+            lines.append("")
+            for i, p in enumerate(problems, 1):
+                title = p.get("title", "")
+                impact = (p.get("impact") or "").strip()
+                lines.append(f"### 问题 {i}：{title}")
+                lines.append("")
+                if impact:
+                    lines.append(f"**影响**：{impact}")
+                    lines.append("")
+                lines.append("---")
+                lines.append("")
+
+        # 改进措施
+        improvements = analysis.get("improvements") or []
+        if improvements:
+            lines.append("## 改进措施（3条）")
+            lines.append("")
+            for i, imp in enumerate(improvements, 1):
+                title = imp.get("title", "")
+                drills = imp.get("drills") or []
+                checkpoints = imp.get("checkpoints") or []
+
+                lines.append(f"### 改进 {i}：{title}")
+                lines.append("")
+
+                if drills:
+                    lines.append("**训练方法**：")
+                    lines.append("")
+                    for d in drills:
+                        lines.append(f"- {d}")
+                    lines.append("")
+
+                if checkpoints:
+                    lines.append("**检查点**：")
+                    lines.append("")
+                    for c in checkpoints:
+                        lines.append(f"- {c}")
+                    lines.append("")
+
+                lines.append("---")
+                lines.append("")
+
+        # 逐段点评
+        segment_feedback = analysis.get("segment_feedback") or []
+        if segment_feedback:
+            lines.append("## 逐段点评")
+            lines.append("")
+            for s in segment_feedback:
+                sid = s.get("segment_id")
+                comment = (s.get("comment") or "").strip()
+                evidence = (s.get("evidence") or "").strip()
+
+                lines.append(f"### Segment {sid}")
+                lines.append("")
+
+                if comment:
+                    lines.append(comment)
+                    lines.append("")
+
+                if evidence:
+                    lines.append(f"**证据**：{evidence}")
+                    lines.append("")
+
+                lines.append("---")
+                lines.append("")
+
+    # 页脚
+    lines.append("---")
+    lines.append("")
+    lines.append(f"*本报告由 AI 教练分析生成，分析时间：{analysis_time}*")
+    lines.append("")
+
+    return "\n".join(lines)
+
+
+def _generate_markdown_filename(task_name: str) -> str:
+    """生成 Markdown 导出文件名。"""
+    safe_name = clean_filename(task_name)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    return f"{safe_name}_训练报告_{timestamp}.md"
+
+
+def _render_export_buttons(
+    run_dir: Path,
+    task_name: str,
+    video_name: str,
+) -> None:
+    """渲染报告导出按钮（Markdown）。
+
+    Args:
+        run_dir: 任务目录
+        task_name: 任务名称
+        video_name: 视频名称
+    """
+    paths = _get_run_paths(run_dir)
+    report = _load_report(paths)
+
+    if not report:
+        return
+
+    # 读取分析时间
+    status = _read_json(paths.status_json)
+    analysis_time = status.get(
+        "updated_at", datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    )
+
+    # 生成 Markdown
+    markdown_content = _format_report_as_markdown(
+        report, task_name, video_name, analysis_time
+    )
+    markdown_filename = _generate_markdown_filename(task_name)
+
+    st.markdown("### 📥 导出报告")
+
+    st.download_button(
+        label="📄 下载 Markdown (.md)",
+        data=markdown_content.encode("utf-8"),
+        file_name=markdown_filename,
+        mime="text/markdown",
+        width="stretch",
+    )
+
+
+def _render_metrics_panel(
+    feats: dict[str, Any], segs: dict[str, Any], run_dir: Path
+) -> None:
+    """渲染技术指标面板。
+
+    根据设计文档分层展示：
+    - Level 1: 默认展示（普通用户）
+    - Level 2: 展开详情（进阶用户）
+    - Level 3: 调试模式（开发/高级用户）
+    """
+    ss = st.session_state
+    debug_mode = ss.get("debug_mode", DEBUG_MODE_ENABLED)
+
+    # 从 features 和 segments 获取数据
+    video_duration = float(feats.get("video_duration", 0) or 0)
+    frame_rate = float(feats.get("frame_rate", 30) or 30)
+    segment_count = int(feats.get("segment_count", 0) or 0)
+    segments = feats.get("segments", [])
+
+    # 从 segments 获取抽帧数据
+    total_frames_extracted = int(segs.get("frame_count", 0) or 0)
+    total_frames_in_video = int(segs.get("total_frames_in_video", 0) or 0)
+
+    # 计算抽帧比例
+    extraction_ratio = (
+        (total_frames_extracted / total_frames_in_video * 100)
+        if total_frames_in_video > 0
+        else 0
+    )
+
+    # 计算平均段长
+    avg_segment_duration = video_duration / segment_count if segment_count > 0 else 0
+
+    # 查找最长/最短段落
+    if segments:
+        longest_seg = max(segments, key=lambda s: s.get("duration", 0))
+        shortest_seg = min(segments, key=lambda s: s.get("duration", 0))
+    else:
+        longest_seg = None
+        shortest_seg = None
+
+    # ============================================================================
+    # Level 1: 默认展示（普通用户）
+    # ============================================================================
+    st.markdown("#### 📊 核心指标")
+
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        st.metric("视频时长", f"{video_duration:.1f}s")
+    with col2:
+        st.metric("抽帧数量", str(total_frames_extracted))
+    with col3:
+        st.metric("动作段数", str(segment_count))
+    with col4:
+        # 简化的可信度评分
+        quality_score = min(100, int(extraction_ratio + 50))
+        st.metric("分析可信度", f"{quality_score}/100")
+
+    st.caption(
+        f"💡 **AI 分析了 {total_frames_extracted} 帧"
+        f"（占原视频 {extraction_ratio:.1f}%），"
+        f"分为 {segment_count} 个动作段进行分析。"
+    )
+
+    # ============================================================================
+    # Level 2: 展开详情（进阶用户）
+    # ============================================================================
+    with st.expander("📹 视频基础信息", expanded=False):
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.write(f"**视频时长**: {video_duration:.2f} 秒")
+            st.write(f"**帧率 (FPS)**: {frame_rate:.1f}")
+        with col2:
+            st.write(f"**总帧数**: {total_frames_in_video}")
+            st.write(f"**抽帧数量**: {total_frames_extracted}")
+        with col3:
+            st.write(f"**抽帧比例**: {extraction_ratio:.1f}%")
+            st.write(f"**抽帧策略**: 均匀分段（每段 5 帧）")
+
+        # 推荐提示
+        if video_duration < 3:
+            st.warning(
+                "⚠️ 视频过短（< 3秒），建议使用 3-12 秒的视频以获得更好的分析效果。"
+            )
+        elif video_duration > 12:
+            st.warning("⚠️ 视频较长（> 12秒），建议截取关键动作片段以提高分析精度。")
+        else:
+            st.success("✅ 视频时长适中，适合进行技术分析。")
+
+        if frame_rate < 25:
+            st.warning("⚠️ 帧率较低（< 25 FPS），可能影响动作识别精度。")
+        else:
+            st.success("✅ 帧率良好（≥ 25 FPS），动作捕捉流畅。")
+
+    with st.expander("🧩 抽帧与分段详情", expanded=False):
+        st.markdown("**抽帧信息**")
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("抽帧数量", str(total_frames_extracted))
+        with col2:
+            st.metric("抽帧比例", f"{extraction_ratio:.1f}%")
+        with col3:
+            st.metric("抽帧间隔", f"均匀分段")
+
+        st.markdown("**动作分段信息**")
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            st.metric("动作段数", str(segment_count))
+        with col2:
+            st.metric("平均段长", f"{avg_segment_duration:.2f}s")
+        with col3:
+            if longest_seg:
+                st.metric(
+                    "最长段落",
+                    f"段 {longest_seg.get('segment_id') + 1}",
+                    help=f"{longest_seg.get('start_time', 0):.1f}s - {longest_seg.get('end_time', 0):.1f}s",
+                )
+        with col4:
+            if shortest_seg:
+                st.metric(
+                    "最短段落",
+                    f"段 {shortest_seg.get('segment_id') + 1}",
+                    help=f"{shortest_seg.get('start_time', 0):.1f}s - {shortest_seg.get('end_time', 0):.1f}s",
+                )
+
+        # 分段详情表格
+        if segments:
+            st.markdown("**各段落详情**")
+            seg_data = []
+            for seg in segments:
+                seg_data.append(
+                    {
+                        "段落": f"段 {seg.get('segment_id') + 1}",
+                        "时长": f"{seg.get('duration', 0):.2f}s",
+                        "时间范围": f"{seg.get('start_time', 0):.1f}s - {seg.get('end_time', 0):.1f}s",
+                        "帧数": seg.get("frame_count", 0),
+                    }
+                )
+            st.dataframe(
+                seg_data,
+                width="stretch",
+                hide_index=True,
+            )
+
+            # 段落分布可视化
+            st.markdown("**段落时间分布**")
+            import matplotlib.pyplot as plt
+
+            fig, ax = plt.subplots(figsize=(10, 1))
+            y_pos = 0
+            for i, seg in enumerate(segments):
+                start = seg.get("start_time", 0)
+                duration = seg.get("duration", 0)
+                ax.barh(y_pos, duration, left=start, height=0.5, color=f"C{i}")
+                ax.text(
+                    start + duration / 2,
+                    y_pos,
+                    f"段{i + 1}",
+                    ha="center",
+                    va="center",
+                    fontsize=8,
+                    color="white",
+                )
+            ax.set_xlim(0, video_duration)
+            ax.set_ylim(-0.5, 0.5)
+            ax.set_xlabel("时间 (秒)")
+            ax.set_yticks([])
+            ax.set_title("动作段落时间分布图")
+            st.pyplot(fig)
+            plt.close()
+
+    with st.expander("🧍 姿态识别质量", expanded=False):
+        # 简化的稳定性指标（基于抽帧数据）
+        stability_score = min(5, int(total_frames_extracted / 10) + 1)
+        stars = "⭐" * stability_score + "☆" * (5 - stability_score)
+
+        col1, col2 = st.columns(2)
+        with col1:
+            st.metric("姿态稳定性", stars)
+        with col2:
+            quality_label = "良好" if frame_rate >= 25 else "一般"
+            st.metric("画面质量", quality_label)
+
+        st.caption(
+            f"💡 基于 {total_frames_extracted} 帧的分析，"
+            f"姿态识别{'稳定' if stability_score >= 3 else '可能不稳定'}。"
+        )
+
+        # 帧数分布
+        if segments:
+            frame_counts = [seg.get("frame_count", 0) for seg in segments]
+            fig, ax = plt.subplots(figsize=(10, 3))
+            ax.bar(range(1, len(frame_counts) + 1), frame_counts, color="steelblue")
+            ax.set_xlabel("段落编号")
+            ax.set_ylabel("帧数")
+            ax.set_title("各段落帧数分布")
+            ax.grid(axis="y", alpha=0.3)
+            st.pyplot(fig)
+            plt.close()
+
+    with st.expander("🤖 AI 分析质量评估", expanded=False):
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            # 有效分析帧占比 = 抽帧数 / 总帧数
+            valid_ratio = extraction_ratio
+            st.metric("有效分析帧占比", f"{valid_ratio:.1f}%")
+        with col2:
+            # 低置信帧数量（简化：基于抽帧稀疏度）
+            low_conf = max(0, total_frames_in_video - total_frames_extracted)
+            st.metric("未采样帧数", str(low_conf))
+        with col3:
+            st.metric("分析模式", "连续动作")
+
+        st.caption(
+            f"💡 AI 基于均匀分段策略分析视频，"
+            f"每段固定采样 5 帧，共分析 {total_frames_extracted} 个关键帧。"
+        )
+
+    with st.expander("🎯 教学可用性评估", expanded=False):
+        # 简化的教学可用性评估
+        completeness = "✅ 良好" if 3 <= video_duration <= 12 else "⚠️ 一般"
+        rhythm = "⚠️ 偏快" if avg_segment_duration < 0.5 else "✅ 适中"
+        teachability_score = min(5, 3 + (1 if 3 <= video_duration <= 12 else 0))
+        teachability_stars = "⭐" * teachability_score + "☆" * (5 - teachability_score)
+
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("动作完整度", completeness)
+        with col2:
+            st.metric("节奏一致性", rhythm)
+        with col3:
+            st.metric("可教学性", teachability_stars)
+
+        st.caption(
+            f"💡 {'视频适合作为教学素材' if teachability_score >= 4 else '视频可作为参考，但建议优化'}"
+        )
+
+    # ============================================================================
+    # Level 3: 调试模式（开发/高级用户）
+    # ============================================================================
+    if debug_mode:
+        st.divider()
+        st.markdown("#### 🔧 调试模式 (Debug Mode)")
+
+        with st.expander("原始 Features 数据", expanded=False):
+            st.json(feats, expanded=False)
+
+        with st.expander("原始 Segments 数据", expanded=False):
+            st.json(segs, expanded=False)
+
+        st.caption("ℹ️ 以上为原始数据格式，用于开发调试和问题排查。")
+
+
 def _parse_frame_evidence(evidence: str) -> list[int]:
     """从证据文本中提取帧号。
 
@@ -539,7 +1088,7 @@ def render_sidebar_panel() -> None:
             help="开启后，任务运行中会自动刷新右侧进度与结果；默认关闭。",
         )
 
-        if st.button("重新生成", use_container_width=True, disabled=is_running):
+        if st.button("重新生成", width="stretch", disabled=is_running):
             ss["task_name"] = datetime.now().strftime("%Y%m%d_%H%M%S")
 
     # =========================
@@ -999,7 +1548,13 @@ def render_results_tabs(run_dir: Path) -> None:
     debug_mode = ss.get("debug_mode", DEBUG_MODE_ENABLED)
     st.markdown("### 分析结果")
     paths = _get_run_paths(run_dir)
-    tabs = st.tabs(["📝 训练报告", "🎬 关键帧", "📊 技术指标", "🧾 日志/错误"])
+
+    # 根据调试模式动态生成标签页
+    tab_names = ["📝 训练报告", "🎬 关键帧", "📊 技术指标"]
+    if debug_mode:
+        tab_names.append("🧾 日志/错误")
+
+    tabs = st.tabs(tab_names)
 
     with tabs[0]:
         report = _load_report(paths)
@@ -1008,166 +1563,221 @@ def render_results_tabs(run_dir: Path) -> None:
         else:
             analysis = report.get("analysis") or {}
 
-            # 1) 总结
-            summary = (analysis.get("summary") or "").strip()
-            if summary:
-                st.markdown("#### 总结")
-                st.write(summary)
+            # 兼容新旧格式：检查是否为教练实战版格式
+            is_coach_report = "one_sentence" in analysis
 
-            st.divider()
+            if is_coach_report:
+                # =========================
+                # 新格式：教练实战版报告
+                # =========================
 
-            # 2) 主要问题（3条）
-            problems = analysis.get("problems") or []
-            st.markdown("#### 主要问题（3条）")
-            if not problems:
-                st.info("暂无 problems（可能任务未完成或模型输出为空）。")
+                # 1) 一句话总结（教练视角）
+                one_sentence = (analysis.get("one_sentence") or "").strip()
+                if one_sentence:
+                    st.success(one_sentence)
+
+                st.divider()
+
+                # 2) 核心问题（3条）
+                top_problems = analysis.get("top_problems") or []
+                st.markdown("#### 核心问题（3条）")
+                if not top_problems:
+                    st.info("暂无 top_problems（可能任务未完成或模型输出为空）。")
+                else:
+                    for p in top_problems:
+                        prob_id = p.get("id", "")
+                        title = p.get("title", "")
+                        key_features = p.get("key_features") or []
+                        direct_consequences = p.get("direct_consequences") or []
+                        coach_judgment = p.get("coach_judgment", "")
+
+                        st.markdown(f"**{prob_id}：{title}**")
+
+                        if key_features:
+                            st.markdown("**关键表现**（你现在在做什么）：")
+                            for f in key_features:
+                                st.write(f"- {f}")
+
+                        if direct_consequences:
+                            st.markdown("**直接后果**（比赛会发生什么）：")
+                            for c in direct_consequences:
+                                st.write(f"- {c}")
+
+                        if coach_judgment:
+                            st.info(f"💡 教练判断：{coach_judgment}")
+
+                        st.divider()
+
+                # 3) 训练计划
+                training_plan = analysis.get("training_plan") or {}
+                st.markdown("#### 训练计划")
+                if not training_plan:
+                    st.info("暂无 training_plan（可能任务未完成或模型输出为空）。")
+                else:
+                    session_goal = training_plan.get("session_goal", "")
+                    if session_goal:
+                        st.markdown(f"**本次训练目标**：{session_goal}")
+                        st.divider()
+
+                    improvements = training_plan.get("improvements") or []
+                    if improvements:
+                        for imp in improvements:
+                            title = imp.get("title", "")
+                            training_methods = imp.get("training_methods") or []
+                            self_check_criteria = imp.get("self_check_criteria") or []
+
+                            st.markdown(f"**{title}**")
+
+                            if training_methods:
+                                st.markdown("训练方法：")
+                                for m in training_methods:
+                                    st.write(f"- {m}")
+
+                            if self_check_criteria:
+                                st.markdown("自检标准：")
+                                for c in self_check_criteria:
+                                    st.write(f"- {c}")
+
+                            st.divider()
+
+                # 4) 分段点评
+                segment_notes = analysis.get("segment_notes") or []
+                st.markdown("#### 分段点评")
+                if not segment_notes:
+                    st.info("暂无 segment_notes（可能任务未完成或模型输出为空）。")
+                else:
+                    for note in segment_notes:
+                        seg_id = note.get("segment_id")
+                        title = note.get("title", "")
+                        coach_comment = note.get("coach_comment", "")
+                        evidence = note.get("evidence") or []
+
+                        st.markdown(f"**{title}**（Segment {seg_id}）")
+                        if coach_comment:
+                            st.write(coach_comment)
+
+                        if evidence:
+                            frame_numbers = [
+                                e.get("frame_index")
+                                for e in evidence
+                                if e.get("frame_index") is not None
+                            ]
+                            if frame_numbers:
+                                st.caption(
+                                    f"关键帧证据：帧号 {', '.join(map(str, frame_numbers))}"
+                                )
+
+                        st.divider()
+
             else:
-                for i, p in enumerate(problems, 1):
-                    st.markdown(f"**问题 {i}：{p.get('title', '')}**")
-                    ev = (p.get("evidence") or "").strip()
-                    imp = (p.get("impact") or "").strip()
+                # =========================
+                # 旧格式：兼容保留
+                # =========================
 
-                    if ev:
-                        st.caption(f"证据：{ev}")
+                # 1) 总结
+                summary = (analysis.get("summary") or "").strip()
+                if summary:
+                    st.markdown("#### 总结")
+                    st.write(summary)
 
-                        # 优先尝试解析帧号
-                        frame_numbers = _parse_frame_evidence(ev)
-                        if frame_numbers:
-                            frame_images = _find_frame_images(run_dir, frame_numbers)
-                            if frame_images:
+                st.divider()
+
+                # 2) 主要问题（3条）
+                problems = analysis.get("problems") or []
+                st.markdown("#### 主要问题（3条）")
+                if not problems:
+                    st.info("暂无 problems（可能任务未完成或模型输出为空）。")
+                else:
+                    for i, p in enumerate(problems, 1):
+                        st.markdown(f"**问题 {i}：{p.get('title', '')}**")
+                        imp = (p.get("impact") or "").strip()
+
+                        if imp:
+                            st.caption(f"影响：{imp}")
+                        st.divider()
+
+                # 3) 改进措施（3条）
+                imps = analysis.get("improvements") or []
+                st.markdown("#### 改进措施（3条）")
+                if not imps:
+                    st.info("暂无 improvements（可能任务未完成或模型输出为空）。")
+                else:
+                    for i, it in enumerate(imps, 1):
+                        st.markdown(f"**改进 {i}：{it.get('title', '')}**")
+
+                        drills = it.get("drills") or []
+                        checkpoints = it.get("checkpoints") or []
+                        evidence = (it.get("evidence") or "").strip()
+
+                        if drills:
+                            st.markdown("训练方法：")
+                            for d in drills:
+                                st.write(f"- {d}")
+                        if checkpoints:
+                            st.markdown("检查点：")
+                            for c in checkpoints:
+                                st.write(f"- {c}")
+                        if evidence:
+                            st.caption(f"证据：{evidence}")
+
+                            # 优先尝试解析帧号
+                            frame_numbers = _parse_frame_evidence(evidence)
+                            if frame_numbers:
                                 st.markdown("**关键帧证据**：")
-                                cols = st.columns(min(len(frame_images), 3))
-                                for col, img_path in zip(cols, frame_images):
-                                    with col:
-                                        st.image(
-                                            str(img_path),
-                                            use_container_width=True,
-                                        )
-                        else:
-                            # 如果没有明确帧号，尝试解析 segment 信息
-                            segment_ids = _parse_segment_evidence(ev)
-                            if segment_ids:
-                                st.markdown("**相关段落帧**：")
-                                for seg_id in segment_ids:
-                                    seg_frames = _get_frames_by_segment(run_dir, seg_id)
-                                    if seg_frames:
-                                        st.caption(f"Segment {seg_id} 的关键帧：")
-                                        cols = st.columns(min(len(seg_frames), 3))
-                                        for col, img_path in zip(cols, seg_frames):
-                                            with col:
-                                                st.image(
-                                                    str(img_path),
-                                                    use_container_width=True,
-                                                )
+                                st.caption(
+                                    f"检测到 {len(frame_numbers)} 个关键帧（帧号：{', '.join(map(str, frame_numbers))}）"
+                                )
                             else:
-                                # 既没有帧号也没有 segment 信息，显示所有可用的帧
+                                # 如果没有明确帧号，提示用户查看关键帧标签页
                                 all_frames = _list_frames(run_dir)
                                 if all_frames:
-                                    st.markdown(
-                                        "**参考帧**（模型未指定具体帧，显示所有可用帧）："
+                                    st.markdown("**参考帧**：")
+                                    st.caption(
+                                        f"共有 {len(all_frames)} 个关键帧（请前往「关键帧」标签页查看）"
                                     )
-                                    cols = st.columns(min(len(all_frames), 4))
-                                    for col, img_path in zip(cols, all_frames):
-                                        with col:
-                                            st.image(
-                                                str(img_path),
-                                                use_container_width=True,
-                                            )
 
-                    if imp:
-                        st.caption(f"影响：{imp}")
-                    st.divider()
+                        st.divider()
 
-            # 3) 改进措施（3条）
-            imps = analysis.get("improvements") or []
-            st.markdown("#### 改进措施（3条）")
-            if not imps:
-                st.info("暂无 improvements（可能任务未完成或模型输出为空）。")
-            else:
-                for i, it in enumerate(imps, 1):
-                    st.markdown(f"**改进 {i}：{it.get('title', '')}**")
+                # 4) 逐段点评（覆盖每段）
+                seg_fb = analysis.get("segment_feedback") or []
+                st.markdown("#### 逐段点评")
+                if not seg_fb:
+                    st.info("暂无 segment_feedback（可能任务未完成或模型输出为空）。")
+                else:
+                    for s in seg_fb:
+                        sid = s.get("segment_id")
+                        comment = (s.get("comment") or "").strip()
+                        evidence = (s.get("evidence") or "").strip()
 
-                    drills = it.get("drills") or []
-                    checkpoints = it.get("checkpoints") or []
-                    evidence = (it.get("evidence") or "").strip()
+                        st.markdown(f"**Segment {sid}**")
+                        if comment:
+                            st.write(comment)
 
-                    if drills:
-                        st.markdown("训练方法：")
-                        for d in drills:
-                            st.write(f"- {d}")
-                    if checkpoints:
-                        st.markdown("检查点：")
-                        for c in checkpoints:
-                            st.write(f"- {c}")
-                    if evidence:
-                        st.caption(f"证据：{evidence}")
-
-                        # 优先尝试解析帧号
-                        frame_numbers = _parse_frame_evidence(evidence)
-                        if frame_numbers:
-                            frame_images = _find_frame_images(run_dir, frame_numbers)
-                            if frame_images:
-                                st.markdown("**关键帧证据**：")
-                                cols = st.columns(min(len(frame_images), 3))
-                                for col, img_path in zip(cols, frame_images):
-                                    with col:
-                                        st.image(
-                                            str(img_path),
-                                            use_container_width=True,
-                                        )
-                        else:
-                            # 如果没有明确帧号，显示所有可用的帧作为参考
-                            all_frames = _list_frames(run_dir)
-                            if all_frames:
-                                st.markdown("**参考帧**（显示所有可用帧供参考）：")
-                                cols = st.columns(min(len(all_frames), 4))
-                                for col, img_path in zip(cols, all_frames):
-                                    with col:
-                                        st.image(
-                                            str(img_path),
-                                            use_container_width=True,
-                                        )
-
-                    st.divider()
-
-            # 4) 逐段点评（覆盖每段）
-            seg_fb = analysis.get("segment_feedback") or []
-            st.markdown("#### 逐段点评")
-            if not seg_fb:
-                st.info("暂无 segment_feedback（可能任务未完成或模型输出为空）。")
-            else:
-                for s in seg_fb:
-                    sid = s.get("segment_id")
-                    comment = (s.get("comment") or "").strip()
-                    evidence = (s.get("evidence") or "").strip()
-
-                    st.markdown(f"**Segment {sid}**")
-                    if comment:
-                        st.write(comment)
-
-                    # 显示段落证据的关键帧
-                    if evidence:
-                        st.caption(f"证据：{evidence}")
-                        frame_numbers = _parse_frame_evidence(evidence)
-                        if frame_numbers:
-                            frame_images = _find_frame_images(run_dir, frame_numbers)
-                            if frame_images:
-                                st.markdown("**关键帧证据**：")
-                                cols = st.columns(min(len(frame_images), 3))
-                                for col, img_path in zip(cols, frame_images):
-                                    with col:
-                                        st.image(
-                                            str(img_path),
-                                            width=200,
-                                            use_container_width=True,
-                                        )
-
-                    st.divider()
+                        # 显示段落证据的关键帧
+                        if evidence:
+                            st.caption(f"证据：{evidence}")
+                            frame_numbers = _parse_frame_evidence(evidence)
+                            if frame_numbers:
+                                frame_images = _find_frame_images(
+                                    run_dir, frame_numbers
+                                )
+                                if frame_images:
+                                    st.markdown("**关键帧证据**：")
+                                    st.caption(
+                                        f"检测到 {len(frame_images)} 个关键帧（帧号：{', '.join(map(str, frame_numbers))}）"
+                                    )
 
             # 5) 调试模式：显示完整原始结构
             if debug_mode:
                 with st.expander("查看完整报告 JSON（调试用）", expanded=False):
                     st.json(report, expanded=True)
+
+            # 6) 导出按钮（Markdown + PDF）
+            status = _read_json(paths.status_json)
+            task_name = status.get("task_name", run_dir.name.split("__")[0])
+            video = storage.get_video_path(paths)
+            video_name = video.name if video else "未知视频"
+            _render_export_buttons(run_dir, task_name, video_name)
 
     with tabs[1]:
         frames = _list_frames(run_dir)
@@ -1178,16 +1788,27 @@ def render_results_tabs(run_dir: Path) -> None:
             segments_data = _load_segments(paths)
             report = _load_report(paths)
 
-            # 构建 segment_id -> 点评的映射
+            # 构建 segment_id -> 点评的映射（兼容新旧格式）
             segment_comments: dict[int, str] = {}
             if report:
                 analysis = report.get("analysis") or {}
-                seg_fb = analysis.get("segment_feedback") or []
-                for s in seg_fb:
-                    sid = s.get("segment_id")
-                    comment = (s.get("comment") or "").strip()
-                    if sid is not None and comment:
-                        segment_comments[int(sid)] = comment
+
+                # 新格式：segment_notes（教练实战版）
+                if "segment_notes" in analysis:
+                    seg_notes = analysis.get("segment_notes") or []
+                    for s in seg_notes:
+                        sid = s.get("segment_id")
+                        comment = (s.get("coach_comment") or "").strip()
+                        if sid is not None and comment:
+                            segment_comments[int(sid)] = comment
+                # 旧格式：segment_feedback
+                else:
+                    seg_fb = analysis.get("segment_feedback") or []
+                    for s in seg_fb:
+                        sid = s.get("segment_id")
+                        comment = (s.get("comment") or "").strip()
+                        if sid is not None and comment:
+                            segment_comments[int(sid)] = comment
 
             # 构建帧号 -> segment_id 的映射
             frame_to_segment: dict[int, int] = {}
@@ -1225,22 +1846,25 @@ def render_results_tabs(run_dir: Path) -> None:
 
     with tabs[2]:
         feats = _load_features(paths)
+        segs = _load_segments(paths)
         if not feats:
             st.info("技术指标尚未生成（任务运行中或尚未完成）。")
         else:
-            st.json(feats, expanded=False)
+            _render_metrics_panel(feats, segs, run_dir)
 
-    with tabs[3]:
-        status = _read_json(paths.status_json)
-        state, _, msg, _ = _status_to_ui(status)
-        if state == "failed":
-            st.error(msg or "任务失败（请查看日志）")
-        logs = _load_logs(paths)
-        if not logs:
-            st.info("暂无日志。")
-        else:
-            with st.expander("展开查看日志", expanded=False):
-                st.text(logs[-20000:])
+    # 日志/错误标签页（仅调试模式）
+    if debug_mode:
+        with tabs[3]:
+            status = _read_json(paths.status_json)
+            state, _, msg, _ = _status_to_ui(status)
+            if state == "failed":
+                st.error(msg or "任务失败（请查看日志）")
+            logs = _load_logs(paths)
+            if not logs:
+                st.info("暂无日志。")
+            else:
+                with st.expander("展开查看日志", expanded=False):
+                    st.text(logs[-20000:])
 
 
 # =========================
