@@ -713,27 +713,52 @@ def run_full_analysis(
     max_frames: int = 1000,
     num_segments: int = 8,
     agent_mode: str = "mock",
+    *,
+    llm_model: str = "deepseek-chat",
 ) -> dict[str, Any]:
-    """Run complete analysis pipeline.
+    """Run complete analysis pipeline (pure steps, convenient for CLI/testing).
 
-    Returns the assembled report.
+    This helper does NOT depend on RunPaths/storage; it only:
+      - writes extracted frames under: output_dir/frames/
+      - returns the assembled report dict
+
+    Args:
+        video_path: input video file path
+        output_dir: directory to store intermediate artifacts (frames/)
+        max_frames: global upper bound (safety cap)
+        num_segments: number of time segments for analysis
+        agent_mode: "mock" or "real"
+        llm_model: llm model name used by agent
+
+    Returns:
+        Assembled report dict.
     """
-    # Step 1: Extract frames
-    frames_data = extract_frames(video_path, output_dir, max_frames)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    frames_output = output_dir / "frames"
+    frames_output.mkdir(parents=True, exist_ok=True)
+
+    # Step 1: Extract frames (per-segment sampling to ensure coverage)
+    frames_data = extract_frames(
+        video_path,
+        frames_output,
+        max_frames=max_frames,  # 仍保留上限兜底
+        num_segments=num_segments,
+        frames_per_segment=5,
+        strategy="per_segment",
+    )
 
     # Step 2: Compute features
     features_data = compute_features(frames_data, num_segments)
 
     # Step 3: Run LLM analysis
-    llm_result = llm_result = run_llm_analysis(
+    llm_result = run_llm_analysis(
         frames_data,
         features_data,
         agent_mode,
         llm_model=llm_model,
-        run_dir=paths.run_dir,  # ✅ 让 step 能找到图片实际路径
+        run_dir=output_dir,  # 让 agent 能按约定找到 output_dir/frames 下的图片
     )
 
     # Step 4: Assemble report
     report = assemble_report(frames_data, features_data, llm_result)
-
     return report

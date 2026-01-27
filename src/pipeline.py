@@ -118,12 +118,6 @@ def execute_run(paths: RunPaths, agent_mode: str | None = None) -> None:
         append_log(paths, f"ERROR: Unexpected error - {e}")
         raise
     try:
-        # Set state to running
-        update_status(
-            paths, state=RunState.RUNNING, progress=0, message="Starting analysis..."
-        )
-        append_log(paths, f"Starting analysis with agent_mode={agent_mode}")
-
         # Step 1: Extract frames (10-30% progress)
         update_status(paths, progress=10, message="Extracting frames from video...")
         append_log(paths, "Extracting frames...")

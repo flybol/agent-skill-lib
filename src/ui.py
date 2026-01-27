@@ -207,6 +207,14 @@ def render_sidebar_panel() -> None:
     with st.sidebar.container():
         st.markdown("🧾 **任务名称**")
         st.write(ss.get("task_name", ""))
+
+        # ✅ 自动刷新开关：放在任务名称下面、重新生成上面（更符合用户心智）
+        ss["auto_refresh_enabled"] = st.toggle(
+            "自动刷新",
+            value=bool(ss.get("auto_refresh_enabled", False)),
+            help="开启后，任务运行中会自动刷新右侧进度与结果；默认关闭。",
+        )
+
         if st.button("重新生成", use_container_width=True, disabled=is_running):
             ss["task_name"] = datetime.now().strftime("%Y%m%d_%H%M%S")
 
@@ -224,13 +232,6 @@ def render_sidebar_panel() -> None:
         with st.expander("展开设置", expanded=False):
             if is_running:
                 st.info("任务运行中：参数仅对下一次分析生效。")
-
-            # 自动刷新允许运行中随时开关（对当前任务有意义）
-            ss["auto_refresh_enabled"] = st.toggle(
-                "自动刷新",
-                value=bool(ss.get("auto_refresh_enabled", False)),
-                help="开启后，任务运行中会自动刷新右侧进度与结果；默认关闭。",
-            )
 
             # 模型：保持你当前策略（锁死/可扩展），不改功能
             ss["llm_model"] = st.selectbox(

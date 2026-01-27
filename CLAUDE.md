@@ -1,193 +1,294 @@
-# CLAUDE.md
+# CLAUDE.md  
+**CoachAgent｜乒乓球视频抽帧 AI 教练分析项目**
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
-
-You are the pair programming assistant for this project (CoachAgent · Streamlit Sports Video Analysis MVP). Your goal: **directly generate/modify files in the VS Code workspace**, keeping the project always "runnable, reproducible, and iterable."
-
-> Key constraint: This is a **uv + Streamlit** project; dependencies are defined in `pyproject.toml`; default Python is >=3.12; minimize file count while keeping responsibilities clear.
+> 本文件用于约束 Claude Code 在本仓库中的行为方式。  
+> 它不是需求文档、不是设计文档，也不是重构操作指南。
 
 ---
 
-## 1) Project Overview and Goals
+## 1. 项目最小背景（给 Claude 的上下文）
 
-- **Project name:** CoachAgent (package name: agent-skill-lib)
-- **Form:** Streamlit Web Application (MVP)
-- **Core pipeline:** Video upload → Frame extraction/features → LLM (langchain + deepseek) analysis → Structured report display
-- **First priority:** **Make the pipeline work** (can reliably generate reports), then optimize performance and UX.
+本项目是一个基于 **Python 3.11 + Streamlit** 的 AI 教练应用：
 
----
+- 用户上传乒乓球训练视频
+- 系统进行视频抽帧与特征计算
+- 调用大模型生成训练分析报告（严格 JSON）
+- 前端展示任务状态、关键帧与分析结论
 
-## 2) Tech Stack (selected libraries, must follow)
-
-**Dependencies** (maintain minimum versions; new dependencies must be justified):
-- `langchain>=1.2.7`
-- `langchain-deepseek>=1.0.1`
-- `streamlit>=1.53.1`
-- `imageio>=2.37.2`
-- `imageio-ffmpeg>=0.6.0`
-- `pdfplumber>=0.11.9`
-
-**Dependency management:**
-- Only use `uv add ...` / `uv add --dev ...` to modify dependencies; don't manually change versions.
-- If you modify dependencies, you must also update `pyproject.toml` and provide the commands for me to execute.
+Claude 在本项目中的角色是：  
+**工程实现与重构协助者，而非产品决策者。**
 
 ---
 
-## 3) Directory Structure (MVP: few files, clear responsibilities)
+## 2. Claude 的角色边界（强制）
 
-Default structure (unless user explicitly requests changes):
+Claude 必须始终遵守以下边界：
 
-- `data`
-  - `tasks`
-- `src`
-  - `app.py`
-    - **Only responsible for:** calling the UI rendering entry point (`ui.render_app()`)
-    - No business logic
+- ❌ 不擅自改变产品逻辑  
+- ❌ 不引入未经允许的新依赖  
+- ❌ 不进行大规模或“顺手”的重构  
+- ❌ 不修改已有功能的业务语义  
 
-  - `ui.py`
-    - **Only responsible for UI:** sidebar, forms, buttons, task selection, right-side report/segments/metrics/logs tabs
-    - UI does no heavy computation, no long I/O (calls through pipeline/steps)
-
-  - `pipeline.py`
-    - **Orchestrates the process:** run initialization, start background tasks, write status, call steps
-    - Responsible for "task lifecycle": queued → running → done/failed
-
-  - `steps.py`
-    - **Pure step functions:** frame extraction, feature calculation, LLM calls, assemble report
-    - Minimal Streamlit dependency (can be reused in CLI/testing)
-
-  - `storage.py`
-    - **File and directory conventions:** RunPaths, data persistence, read status/report/segments/log
-    - All paths are generated here (unified standard)
-
-  - `agent.py`
-    - **LLM input construction + output parsing:** prompt templates, structured output schema, mock/real switching
-    - No direct UI
-
-  - `constants.py`
-    - **Global constants and conventions:** app title, data directories, supported video extensions, default parameters, status enums, etc.
-    - Prohibit scattered magic strings/duplicate constants across files; import everything from here
-
-  - `errors.py`
-    - **Unified error types:** define project domain exceptions (e.g., RunNotFound, InvalidStatus, StepFailed, etc.)
-    - pipeline/steps/storage throw domain exceptions; UI layer catches and displays friendly messages
-
-  - `utils.py`
-    - General utility functions: centralize business-agnostic capabilities (string cleaning/normalization, datetime parsing/formatting, JSON safe parsing, Path/directory helpers, etc.)
-    - Standard library only; prefer pure functions; no Streamlit/LangChain/business dependencies; pipeline/steps/storage/ui call this to avoid duplicated implementations
+- ✅ 仅在明确指令下修改代码  
+- ✅ 以“最小可运行改动”为第一原则  
+- ✅ 优先拆边界、减耦合、明职责  
+- ✅ 确保每一步修改后项目仍可运行  
 
 ---
 
-## 4) Constants and Errors Usage Rules (must follow)
+## 3. 全局工程约束
 
-### constants.py rules
-- Any cross-module usage: directory names, file names, status names, default parameters, UI copy (core titles/labels) should go in `constants.py`
-- `constants.py` should only contain "pure constants" - no I/O, no env reading, no Streamlit dependencies
-- Recommended constant categories:
-  - App/UI: `APP_TITLE`
-  - Data dirs: `DATA_DIR`, `UPLOAD_DIR`, `RUNS_DIR`
-  - File names: `STATUS_JSON`, `REPORT_JSON`, `SEGMENTS_JSON`, `FEATURES_JSON`, `LOGS_TXT`
-  - Status values: `STATE_QUEUED`, `STATE_RUNNING`, `STATE_DONE`, `STATE_FAILED` (or enum)
-  - Limits: `POSE_MAX_FRAMES`, `DEFAULT_SEGMENTS`, `MAX_UPLOAD_MB`, etc.
+### 3.1 技术栈约束（不可更换）
 
-### errors.py rules
-- All custom exceptions inherit from `CoachAgentError`
-- Recommended layered exceptions:
-  - `StorageError` (paths/files/parsing)
-  - `PipelineError` (lifecycle/state/concurrency)
-  - `StepError` (step failures)
-  - `AgentError` (LLM input/output parsing failure)
-- Prohibit direct `st.error()` or `st.stop()` in low-level modules; only throw exceptions or return structured errors, UI decides how to display.
+- Python `3.11+`
+- Streamlit `>= 1.53.0`
+- LangChain `>= 1.2.6`
+
+> 未经明确允许，禁止引入任何新依赖。
 
 ---
 
-## 5) Run Data Persistence Conventions (must follow)
+### 3.2 架构职责约束
 
-- All artifacts written to: `./data/runs/<task_name>__<run_id>/`
-- Must contain (minimum):
-  - `input/video.*` (original uploaded video)
-  - `status.json` (task state, progress, errors)
-  - `report.json` (final structured report)
-  - `segments.json` (frame extraction/key segments/segmentation info)
-  - `features.json` (motion/pose metrics, can be empty but structure must be stable)
-  - `logs.txt` (step logs/exception stacks)
-- Re-run strategy: re-run within same run directory, overwrite all artifact files except `input/` and `config.json`.
+- UI 只负责展示与用户交互  
+- Pipeline 只负责流程编排  
+- Agent 只负责 LLM 调用与解析  
+- Storage 只负责 Run 目录与文件管理  
 
----
-
-## 6) Streamlit UI Conventions (must follow)
-
-- Don't do heavy computation in Streamlit callbacks; all heavy computation goes through background tasks or pipeline.
-- UI refresh must be controllable:
-  - "Refresh progress" only refreshes state/progress and right-side display, don't corrupt overall page logic
-  - Use `st.session_state` to store `selected_run_dir`, `right_last_refresh_ts`, etc.
-- UI must give friendly prompts for "unimplemented/not-generated files", no direct KeyError/JSONDecodeError allowed.
-- All UI output must be reproducible: read files from run_dir, don't rely on memory variables.
+禁止：
+- 在 UI 中进行业务计算  
+- 在 Agent 中直接操作文件系统  
+- 在 Pipeline 中处理 UI 状态细节  
 
 ---
 
-## 7) LLM / Agent Specifications (langchain + deepseek)
+### 3.3 LLM 输出约束（必须遵守）
 
-- Must support two modes:
-  1) `mock`: no external calls, returns stable structured output (for UI/pipeline debugging)
-  2) `real`: calls deepseek (via `langchain-deepseek`)
-- Output must be **structured JSON** (stable fields), at minimum containing:
-  - `summary`
-  - `problems: [ {title, evidence, impact} ]` (3 items)
-  - `improvements: [ {title, drills, checkpoints} ]` (3 items)
-  - `segment_feedback: [ {segment_id, comment} ]`
-- If model returns unparsable content: must have fallback (fix/retry/degrade to mock), and record in `logs.txt`.
+- 所有 LLM 输出必须为 **严格 JSON**
+- 不允许夹带 markdown、说明性文字或前后缀
+- 解析失败必须：
+  - 明确抛出错误
+  - 或降级为 mock（如已有逻辑）
+
+Claude 在修改 Prompt 或 Agent 时：
+- 稳定性优先于智能性
+- 可解析性优先于表达丰富度
+
+---
+### 3.4 无效目录读取约束（新增）
+
+Claude 在分析、搜索、修改代码时，**必须忽略以下目录及其内容**：
+
+- `.venv/`
+- `.streamlit/`
+- `.vscode/`
+- `.idea/`
+- `__pycache__/`
+- `node_modules/`
+- `.git/`
+- `data/`
+
+规则：
+
+- 不读取其中的任何文件
+- 不基于其中内容做设计或重构决策
+- 不在输出中引用这些目录中的配置或代码
+- 不修改、不建议修改上述目录内容
+
+这些目录 **不属于项目源代码的一部分**，仅用于本地环境或编辑器配置。
+
+---
+## 3.5 项目目录结构与文件职责（Claude 必须遵守）
+
+### 3.5.1 推荐与目标目录结构
+```shell
+src/
+├── app.py # Streamlit 启动入口（保持稳定）
+│
+├── ui/
+│ ├── ui.py # render_app()，页面布局与交互
+│ └── components.py # 可复用 UI 组件（可选）
+│
+├── pipeline/
+│ ├── pipeline.py # 任务编排（start_run / execute_run）
+│ └── steps/
+│ ├── extract_frames.py
+│ ├── compute_features.py
+│ └── llm_analysis.py
+│
+├── agent/
+│ ├── agent.py # LLM 调用、JSON 解析与校验
+│ ├── prompts.py # Prompt 模板（严格 JSON）
+│ └── schemas.py # 分析结果结构定义（如存在）
+│
+├── storage/
+│ └── storage.py # Run 目录、文件读写、列表查询
+│
+├── domain/
+│ ├── models.py # 领域数据模型
+│ └── errors.py # 领域异常定义
+│
+├── common/
+│ ├── constants.py
+│ └── utils.py
+│
+└── data/
+└── runs/ # 每次分析任务的运行数据目录
+```
+
+> 若当前项目尚未完全拆分到该结构，必须采用“薄代理 + 渐进迁移”的方式完成重构。
 
 ---
 
-## 8) Code Style and Quality Standards
+### 3.5.2 各层职责说明（不可违反）
 
-- Python >=3.12
-- Add type annotations to key functions (especially cross-module interface functions)
-- Use `pathlib.Path` for all file I/O
-- Logging: use `logging`, write key logs to both console and `logs.txt` (run directory)
-- Error handling:
-  - Any exception must be written to `status.json` (state=failed + error info)
-  - UI only shows friendly error summary, detailed stacks in logs
+#### UI（`ui/`）
+- 页面布局
+- 用户输入
+- 状态与结果展示  
+禁止业务计算、文件路径拼接、LLM 调用。
 
----
+#### Pipeline（`pipeline/`）
+- 分析流程编排
+- Step 调度
+- 任务状态更新  
+不关心 UI 表现与 Prompt 细节。
 
-## 9) UV Workflow (default)
+#### Steps（`pipeline/steps/`）
+- 单一职责：
+  - 抽帧
+  - 特征计算
+  - 调用 Agent  
+输入输出清晰，可单独测试。
 
-After completing any runnable feature, you must provide a list of copy-paste commands for me:
+#### Agent（`agent/`）
+- 构造 Prompt
+- 调用大模型
+- 提取并校验严格 JSON  
+禁止直接读写 Run 目录。
 
-- Install/sync: `uv sync` (or per project convention)
-- Run: `uv run streamlit run app.py`
-- (If applicable) test: `uv run pytest -q`
+#### Storage（`storage/`）
+- 创建 Run 目录
+- 统一文件读写
+- 查询历史任务  
+其他模块不得自行拼路径。
 
-When adding new dependencies, provide:
-- `uv add ...` / `uv add --dev ...`
-- Then the verification command `uv run ...`
-
----
-
-## 10) How You Output Changes (strong constraint)
-
-- You must explicitly list: **list of files added/modified**.
-- Small changes: directly give precise location and content of "which lines/which function" (suitable for manual editing).
-- Large changes: prefer unified diff (I can review and apply), or give complete file content by file block.
-- Don't just describe ideas; give actionable modification content.
-
----
-
-## 11) Default Behavior (when requirements are unclear)
-
-- Priority: "make pipeline work" - mock agent → persist report → UI display
-- Next: stability - prevent JSONDecodeError, prevent missing files, prevent state desync
-- Finally: UX/performance - caching, sampling, segmentation strategy, concurrency, etc.
+#### Domain（`domain/`）
+- 领域数据模型
+- 领域异常定义  
+不依赖 Streamlit 或 UI。
 
 ---
 
-## 12) Definition of Done (completion criteria)
+### 3.5.3 Run 目录结构（文件契约）
+```shell
+data/runs/<task_name>__<run_id>/
+├── input.mp4
+├── status.json
+├── frames/
+│ ├── 0001.png
+│ └── ...
+├── frames.json
+├── features.json
+├── analysis.json
+└── logs.txt
+```
 
-When user says "fix/continue development/finish", your deliverables must satisfy:
-- Streamlit can start and new tasks can be created via UI
-- At least one mock analysis can run and generate report
-- UI can view historical tasks and correctly refresh state
-- run directory artifact file structure matches conventions
-- Provide a set of copy-paste commands (uv + streamlit)
+约定：
+- pipeline 负责写入
+- UI 只读取
+- agent 不直接操作文件
+
+---
+
+### 3.5.4 目录与文件修改规则
+
+- 不得随意新增顶层目录
+- 不得重命名已有目录
+- 若需迁移代码：
+  - 保留旧入口
+  - 使用导入代理方式过渡
+
+---
+
+## 4. 修改代码时的基本规则
+
+### 4.1 最小改动原则
+
+若只需修改 10 行代码，禁止修改 100 行。  
+避免无关重排、重命名和顺带优化。
+
+---
+
+### 4.2 入口稳定原则
+
+- 不随意修改 `app.py`、`ui.py` 对外接口
+- 重构时必须保留旧入口
+
+---
+
+### 4.3 删除代码规则
+
+- 不允许直接大规模删除
+- 必须明确删除原因
+- 优先注释或迁移至 legacy
+
+---
+
+## 5. Claude 的输出规范
+
+### 5.1 直接给文件
+
+- 仅输出一个完整代码块
+- 内容为完整文件
+- 不附加解释说明
+
+---
+
+### 5.2 精确修改 / 修复 Bug
+
+- 明确修改位置
+- 给出替换后的完整代码块
+- 不输出无关内容
+
+---
+
+### 5.3 评审与建议
+
+- 仅输出结构化文字
+- 不提前写实现代码
+
+---
+
+## 6. 可运行性底线
+
+任何代码修改必须保证：
+
+- Streamlit 可正常启动
+- 至少能跑通一个完整分析任务
+- 不导致 UI 状态异常或崩溃
+
+---
+
+## 7. 明确禁止事项
+
+- 不重新设计产品
+- 不追求模型“更聪明”
+- 不写营销或展示文案
+- 不推断未明确提出的需求
+
+---
+
+## 8. 协作默认约定
+
+- 以一步一任务方式推进
+- 默认延续当前重构目标
+- 不频繁反问，除非存在重大歧义
+
+---
+
+## 9. 核心原则
+
+**稳定、可控、可回退，永远优先于漂亮与聪明。**
+
+---

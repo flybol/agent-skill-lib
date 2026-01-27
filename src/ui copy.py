@@ -1,4 +1,3 @@
-# ui.py (UPDATED)
 from __future__ import annotations
 
 import json
@@ -24,7 +23,7 @@ import storage
 # =========================
 # 基础配置
 # =========================
-APP_TITLE = "乒乓数字教练"
+APP_TITLE = "乒乓数字教练v1.0"
 DATA_DIR = Path("./data")
 UPLOAD_DIR = DATA_DIR / "uploads"
 RUNS_DIR = DATA_DIR / "runs"
@@ -159,69 +158,264 @@ def _ui_autorefresh(*, interval_ms: int, key: str) -> None:
     st_autorefresh(interval=interval_ms, key=key)
 
 
-# =========================
-# UI：Sidebar 历史
-# =========================
-def render_sidebar_history() -> None:
+def _is_running_from_selected() -> bool:
+    """根据当前选中的 run 状态判断是否运行中。"""
     ss = st.session_state
-    ss.setdefault("selected_run_dir", "")
-
-    st.sidebar.title("CoachAgent")
-    st.sidebar.caption("选择历史任务，或在右侧上传视频创建新任务。")
-
-    run_dirs = _list_run_dirs(limit=RECENT_LIMIT)
-
-    labels: dict[str, str] = {}
-    for p in run_dirs:
-        paths = _get_run_paths(p)
-        status = _read_json(paths.status_json)
-        state, prog, _, _ts = _status_to_ui(status)
-        dot = {
-            "done": "🟢",
-            "running": "🟡",
-            "queued": "🟡",
-            "pending": "🟡",
-            "failed": "🔴",
-        }.get(state, "⚪")
-        task_name = status.get("task_name") or p.name.split("__")[0]
-        labels[str(p)] = f"{dot} {task_name} · {p.name.split('__')[-1]}"
-
-    options = [""] + [str(p) for p in run_dirs]
-
-    def _fmt(x: str) -> str:
-        if not x:
-            return "（未选择任务）"
-        return labels.get(x, Path(x).name)
-
-    chosen = st.sidebar.selectbox(
-        "历史任务（最近10条）",
-        options=options,
-        index=0
-        if ss["selected_run_dir"] not in options
-        else options.index(ss["selected_run_dir"]),
-        format_func=_fmt,
-    )
-    ss["selected_run_dir"] = chosen
-
-    st.sidebar.divider()
-    if not ss["selected_run_dir"]:
-        st.sidebar.info("右侧上传视频后会自动创建任务。")
-        return
-
-    run_dir = Path(ss["selected_run_dir"])
+    selected = ss.get("selected_run_dir", "")
+    if not selected:
+        return False
+    run_dir = Path(selected)
+    if not run_dir.exists():
+        return False
     paths = _get_run_paths(run_dir)
     status = _read_json(paths.status_json)
-    state, prog, msg, ts = _status_to_ui(status)
-    task_name = status.get("task_name") or run_dir.name.split("__")[0]
+    state, _prog, _msg, _ts = _status_to_ui(status)
+    return state in {"queued", "pending", "running", "unknown"}
 
-    with st.sidebar.container(border=True):
-        st.markdown(f"**当前任务**：{task_name}")
-        st.markdown(f"**状态**：`{state}`")
-        st.progress(prog)
-        if msg:
-            st.caption(msg)
-        if ts:
-            st.caption(f"更新时间：{ts}")
+
+def _regen_selected_run() -> None:
+    """基于当前选中的 run：读取其 config/video，创建一个新 run 并后台启动，然后切到新 run。"""
+    ss = st.session_state
+    selected = ss.get("selected_run_dir", "")
+    if not selected:
+        st.warning("请先在左侧选择一个历史任务，再点击重新生成。")
+        return
+
+    old_run_dir = Path(selected)
+    if not old_run_dir.exists():
+        st.error("选中的任务目录不存在，请重新选择历史任务。")
+        ss["selected_run_dir"] = ""
+        return
+
+    old_paths = _get_run_paths(old_run_dir)
+
+    # 1) 找到旧任务视频
+    old_video = storage.get_video_path(old_paths)
+    if not old_video or not Path(old_video).exists():
+        st.error("未找到旧任务的视频文件，无法重新生成。")
+        return
+
+    # 2) 读取旧任务配置（尽量复用旧任务参数）
+    old_cfg = {}
+    try:
+        # RunPaths 通常会有 config_json；没有也没关系
+        old_cfg = _read_json(old_paths.config_json)  # type: ignore[attr-defined]
+    except Exception:
+        old_cfg = {}
+
+    task_name = _slugify_task_name(str(ss.get("task_name") or "")) or "task"
+    agent_mode = str(old_cfg.get("agent_mode") or AGENT_MODE_REAL)
+    llm_model = str(
+        old_cfg.get("llm_model") or ss.get("llm_model") or DEFAULT_LLM_MODEL
+    )
+
+    try:
+        num_segments = int(
+            old_cfg.get("num_segments") or ss.get("num_segments") or DEFAULT_SEGMENTS
+        )
+    except Exception:
+        num_segments = DEFAULT_SEGMENTS
+
+    try:
+        max_frames = int(
+            old_cfg.get("max_frames") or ss.get("max_frames") or POSE_MAX_FRAMES
+        )
+    except Exception:
+        max_frames = int(POSE_MAX_FRAMES)
+
+    _ensure_dirs()
+
+    # 3) 创建新 run（不覆盖旧 run）
+    try:
+        new_paths, _new_run_id = pipeline.create_run(
+            task_name=task_name,
+            video_path=Path(old_video),
+            agent_mode=agent_mode,
+            llm_model=llm_model,
+            max_frames=int(max_frames),
+            num_segments=int(num_segments),
+        )
+    except Exception as e:
+        st.error(f"重新生成：创建新任务失败：{e}")
+        return
+
+    # 4) 启动后台执行
+    try:
+        pipeline.start_background_run(new_paths, overwrite=True)
+    except Exception as e:
+        try:
+            storage.update_status(
+                new_paths,
+                state=storage.RunState.FAILED,
+                message="重新生成启动失败",
+                error=str(e),
+            )  # type: ignore
+        except Exception:
+            pass
+        st.error(f"重新生成：启动失败：{e}")
+        return
+
+    # 5) 切到新 run + 开启自动刷新 + 强制刷新 UI
+    ss["selected_run_dir"] = str(new_paths.run_dir)
+    ss["auto_refresh_enabled"] = True
+
+
+# =========================
+# UI：Sidebar 操作面板
+# 目标：默认无需用户操作（上传 + 开始分析即可）
+# 保留能力：1) 任务名称 2) 分析参数 3) 历史任务
+# =========================
+def render_sidebar_panel() -> None:
+    ss = st.session_state
+    ss.setdefault("selected_run_dir", "")
+    ss.setdefault("task_name", datetime.now().strftime("%Y%m%d_%H%M"))
+    ss.setdefault("auto_refresh_enabled", False)
+    ss.setdefault("llm_model", DEFAULT_LLM_MODEL)
+    ss.setdefault("num_segments", DEFAULT_SEGMENTS)
+
+    # 运行中：锁定部分设置，避免用户误以为对当前任务生效
+    is_running = _is_running_from_selected()
+    ss["is_running"] = is_running
+
+    # 预先计算 max_frames（供主页面 create_run 使用）
+    try:
+        num_segments = int(ss.get("num_segments", DEFAULT_SEGMENTS))
+    except Exception:
+        num_segments = DEFAULT_SEGMENTS
+    expected_total = int(num_segments) * FRAMES_PER_SEGMENT
+    ss["max_frames"] = int(min(expected_total, int(POSE_MAX_FRAMES)))
+
+    st.sidebar.title("CoachAgent")
+    st.sidebar.caption("默认：上传视频 → 点击开始分析。左侧仅在需要时调整设置。")
+
+    # =========================
+    # 1) 任务名称（默认只读展示）
+    # =========================
+    with st.sidebar.container():
+        st.markdown("🧾 **任务名称**")
+        st.write(ss.get("task_name", ""))
+        selected_run_dir = ss.get("selected_run_dir", "")
+        regen_disabled = bool(is_running) or (not selected_run_dir)
+
+        if st.button(
+            "重新生成",
+            use_container_width=True,
+            disabled=regen_disabled,
+            key="btn_regen_selected",
+            help="基于当前选中的历史任务重新生成（会创建一个新任务并自动切换）。"
+            if not regen_disabled
+            else (
+                "任务运行中无法重新生成"
+                if is_running
+                else "请先在历史任务中选择一个任务"
+            ),
+        ):
+            # 产品逻辑：重新生成 = 复用选中任务的视频与参数，创建新 run 并启动
+            with st.spinner("正在提交重新生成任务…"):
+                _regen_selected_run()
+
+    # =========================
+    # 2) 分析参数（默认摘要 + 展开设置）
+    # =========================
+    with st.sidebar.container():
+        st.markdown("⚙️ **分析参数**")
+        st.caption(
+            f"默认：模型 {ss.get('llm_model', DEFAULT_LLM_MODEL)} ｜ "
+            f"分段 {int(ss.get('num_segments', DEFAULT_SEGMENTS))} ｜ "
+            f"自动刷新 {'开' if ss.get('auto_refresh_enabled') else '关'}"
+        )
+
+        with st.expander("展开设置", expanded=False):
+            if is_running:
+                st.info("任务运行中：参数仅对下一次分析生效。")
+
+            # 自动刷新允许运行中随时开关（对当前任务有意义）
+            ss["auto_refresh_enabled"] = st.toggle(
+                "自动刷新",
+                value=bool(ss.get("auto_refresh_enabled", False)),
+                help="开启后，任务运行中会自动刷新右侧进度与结果；默认关闭。",
+            )
+
+            # 模型：保持你当前策略（锁死/可扩展），不改功能
+            ss["llm_model"] = st.selectbox(
+                "分析模型",
+                [DEFAULT_LLM_MODEL, "glm-4.6v-flash"],
+                index=0,
+                disabled=True,
+            )
+
+            ss["num_segments"] = st.number_input(
+                "分段数量",
+                min_value=1,
+                max_value=16,
+                value=int(ss.get("num_segments", DEFAULT_SEGMENTS)),
+                step=1,
+                disabled=is_running,
+            )
+
+            expected_total = int(ss["num_segments"]) * FRAMES_PER_SEGMENT
+            ss["max_frames"] = int(min(expected_total, int(POSE_MAX_FRAMES)))
+            st.caption(
+                f"抽帧策略：按时间均分 {int(ss['num_segments'])} 段，每段均匀抽 {FRAMES_PER_SEGMENT} 帧"
+                f"（预计总帧数≈ {expected_total}，上限兜底= {ss['max_frames']}）。"
+            )
+
+    # =========================
+    # 3) 历史任务（默认折叠）
+    # =========================
+    with st.sidebar.container(border=False):
+        st.markdown("🕘 **历史任务**")
+
+        run_dirs = _list_run_dirs(limit=RECENT_LIMIT)
+        labels: dict[str, str] = {}
+        for p in run_dirs:
+            paths = _get_run_paths(p)
+            status = _read_json(paths.status_json)
+            state, _prog, _m, _ts = _status_to_ui(status)
+            dot = {
+                "done": "🟢",
+                "running": "🟡",
+                "queued": "🟡",
+                "pending": "🟡",
+                "failed": "🔴",
+            }.get(state, "⚪")
+            task_name = status.get("task_name") or p.name.split("__")[0]
+            labels[str(p)] = f"{dot} {task_name} · {p.name.split('__')[-1]}"
+
+        options = [""] + [str(p) for p in run_dirs]
+
+        def _fmt(x: str) -> str:
+            if not x:
+                return "（未选择任务）"
+            return labels.get(x, Path(x).name)
+
+        with st.expander("展开查看最近任务", expanded=False):
+            chosen = st.selectbox(
+                "最近10条",
+                options=options,
+                index=0
+                if ss.get("selected_run_dir", "") not in options
+                else options.index(ss.get("selected_run_dir", "")),
+                format_func=_fmt,
+            )
+            ss["selected_run_dir"] = chosen
+
+            if not ss["selected_run_dir"]:
+                st.caption("未选择历史任务。")
+            else:
+                run_dir = Path(ss["selected_run_dir"])
+                paths = _get_run_paths(run_dir)
+                status = _read_json(paths.status_json)
+                state, prog, msg, ts = _status_to_ui(status)
+                task_name = status.get("task_name") or run_dir.name.split("__")[0]
+
+                st.markdown(f"**当前任务**：{task_name}")
+                st.markdown(f"**状态**：`{state}`")
+                st.progress(prog)
+                if msg:
+                    st.caption(msg)
+                if ts:
+                    st.caption(f"更新时间：{ts}")
 
 
 # =========================
@@ -232,10 +426,10 @@ def render_upload_and_start() -> None:
     ss.setdefault("task_name", datetime.now().strftime("%Y%m%d_%H%M"))
     ss.setdefault("uploaded_file", None)
 
-    # ✅ 自动刷新：默认关闭，并放到“任务名称”这一行
+    # ✅ 自动刷新：默认关闭（开关在左侧「分析参数」里）
     ss.setdefault("auto_refresh_enabled", False)
-    with st.container(border=True):
-        st.markdown("### Step 1 · 上传训练视频")
+    with st.container(border=False):
+        st.markdown("### 上传训练视频")
         st.markdown(
             """
 <style>
@@ -269,7 +463,7 @@ section[data-testid="stFileUploaderDropzone"]
 /* 替换第二行：Limit 200MB per file • ... */
 section[data-testid="stFileUploaderDropzone"]
   div[data-testid="stFileUploaderDropzoneInstructions"] > div:nth-child(2) > span:nth-child(2)::after {
-  content: "单文件最大 20MB • 支持 MP4 / AVI / MOV / MKV / MPEG4";
+  content: "单文件最大 10MB • 支持 MP4 / AVI / MOV / MKV / MPEG4";
   visibility: visible;
   position: absolute;
   left: 0;
@@ -328,47 +522,20 @@ span[data-testid="stFileUploaderFileErrorMessage"]::after{
         if uploaded is not None:
             ss["uploaded_file"] = uploaded
         uploaded = ss.get("uploaded_file")
-        st.caption("建议 5~20 秒，尽量拍到完整准备动作与击球瞬间。")
+        st.caption("建议 1~3 秒，尽量拍到完整准备动作与击球瞬间。")
 
-        st.markdown("### Step 2 · 任务名称（用于历史记录）")
-        name_col, refresh_col = st.columns([0.72, 0.28], vertical_alignment="center")
-        with name_col:
-            task_name = st.text_input(
-                "任务名称",
-                value=ss["task_name"],
-                label_visibility="collapsed",
-                disabled=True,
-            )
-            ss["task_name"] = task_name
-        with refresh_col:
-            ss["auto_refresh_enabled"] = st.toggle(
-                "自动刷新",
-                value=bool(ss.get("auto_refresh_enabled", False)),
-                help="开启后，任务运行中会自动刷新右侧进度与结果；默认关闭。",
-            )
-
-        st.markdown("### Step 3 · 分析参数")
+        # ✅ 任务名称 / 分析参数：统一从左侧操作面板（session_state）读取
+        task_name = str(ss.get("task_name", "") or "")
         agent_mode = AGENT_MODE_REAL
-
-        c2, c3 = st.columns(2)
-        with c2:
-            llm_model = st.selectbox(
-                "分析模型",
-                [DEFAULT_LLM_MODEL, "glm-4.6v-flash"],
-                index=0,
-                disabled=True,
-            )
-        with c3:
-            num_segments = st.number_input(
-                "分段数量", min_value=1, max_value=16, value=DEFAULT_SEGMENTS, step=1
-            )
-
-        expected_total = int(num_segments) * FRAMES_PER_SEGMENT
-        max_frames = min(expected_total, int(POSE_MAX_FRAMES))
-        st.caption(
-            f"抽帧策略：按时间均分 {num_segments} 段，每段均匀抽 {FRAMES_PER_SEGMENT} 帧"
-            f"（预计总帧数≈ {expected_total}，上限兜底= {max_frames}）。"
-        )
+        llm_model = str(ss.get("llm_model", DEFAULT_LLM_MODEL) or DEFAULT_LLM_MODEL)
+        try:
+            num_segments = int(ss.get("num_segments", DEFAULT_SEGMENTS))
+        except Exception:
+            num_segments = DEFAULT_SEGMENTS
+        try:
+            max_frames = int(ss.get("max_frames", POSE_MAX_FRAMES))
+        except Exception:
+            max_frames = int(POSE_MAX_FRAMES)
 
         start_clicked = st.button(
             "🚀 开始分析",
@@ -416,7 +583,6 @@ span[data-testid="stFileUploaderFileErrorMessage"]::after{
 
         # 3) 后台启动执行
         try:
-            pipeline.start_background_run(paths, overwrite=True)
             pipeline.start_background_run(paths, overwrite=True)
             ss["auto_refresh_enabled"] = True  # ✅ 开始后默认开启自动刷新
             st.success("已开始分析（后台执行中）。")
@@ -634,7 +800,6 @@ def render_results_tabs(run_dir: Path) -> None:
 # =========================
 def render_main_panel() -> None:
     ss = st.session_state
-    st.subheader("上传与启动")
     render_upload_and_start()
 
     st.divider()
@@ -664,5 +829,5 @@ def render_app() -> None:
     )
     st.title(APP_TITLE)
     st.caption("上传视频 → 抽帧/特征 → AI 教练报告（3个问题 + 3个改进措施）。")
-    render_sidebar_history()
+    render_sidebar_panel()
     render_main_panel()
