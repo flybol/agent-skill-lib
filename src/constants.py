@@ -60,6 +60,7 @@ class RunState(str, Enum):
 SUPPORTED_VIDEO_EXTENSIONS = {".mp4", ".mov", ".avi", ".mkv", ".webm"}
 MAX_UPLOAD_MB = 10
 MAX_BYTES = MAX_UPLOAD_MB * 1024 * 1024
+MAX_VIDEO_DURATION_SEC = 5.0  # 最大视频时长（秒）
 
 # ============================================================================
 # Processing Limits
@@ -77,6 +78,11 @@ MAX_FRAMES_PER_SEGMENT = 120
 # Agent modes
 AGENT_MODE_MOCK = "mock"
 AGENT_MODE_REAL = "real"
+
+# Debug mode（UI 层面的调试模式）
+# True: 显示完整的原始 JSON 和调试信息
+# False: 仅显示用户友好的分析结果
+DEBUG_MODE_ENABLED = False
 
 # LLM output structure requirements
 PROBLEMS_COUNT = 3

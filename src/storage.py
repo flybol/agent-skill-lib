@@ -21,6 +21,7 @@ from constants import (
     CONFIG_JSON,
     RunState,
     SUPPORTED_VIDEO_EXTENSIONS,
+    DEFAULT_LLM_MODEL,
 )
 from errors import (
     StorageError,
@@ -67,9 +68,6 @@ class RunStatus:
         return cls(**data)
 
 
-from constants import DEFAULT_LLM_MODEL  # 顶部 import 区加这一行
-
-
 @dataclass
 class RunConfig:
     agent_mode: str  # mock/real
@@ -108,12 +106,26 @@ class RunPaths:
     config_json: Path
 
     @staticmethod
-    def create(task_name: str, run_id: str, base_dir: Path = RUNS_DIR) -> "RunPaths":
-        """Create RunPaths for a new run."""
+    def create(task_name: str, run_id: str, user_id: str | None = None, base_dir: Path = RUNS_DIR) -> "RunPaths":
+        """Create RunPaths for a new run.
+
+        Args:
+            task_name: Name of the task
+            run_id: Unique run identifier
+            user_id: Optional user ID for multi-user isolation
+            base_dir: Base directory for runs (default: RUNS_DIR)
+
+        Returns:
+            RunPaths object with all paths for the run
+        """
         dir_name = clean_filename(
             RUN_DIR_PATTERN.format(task_name=task_name, run_id=run_id)
         )
-        run_dir = base_dir / dir_name
+        # 支持用户子目录隔离
+        if user_id:
+            run_dir = base_dir / user_id / dir_name
+        else:
+            run_dir = base_dir / dir_name
         input_dir = run_dir / INPUT_DIR
 
         return RunPaths(
@@ -149,17 +161,30 @@ class RunPaths:
 # ============================================================================
 
 
-def create_run_directory(task_name: str, run_id: str) -> RunPaths:
-    """Create a new run directory structure."""
-    paths = RunPaths.create(task_name, run_id)
+def create_run_directory(task_name: str, run_id: str, user_id: str | None = None) -> RunPaths:
+    """Create a new run directory structure.
 
-    if paths.run_dir.exists():
-        raise StorageError(f"Run directory already exists: {paths.run_dir}")
+    Args:
+        task_name: Name of the task
+        run_id: Unique run identifier
+        user_id: Optional user ID for multi-user isolation
 
-    paths.run_dir.mkdir(parents=True)
-    paths.input_dir.mkdir()
+    Returns:
+        RunPaths object with all paths for the run
 
-    logger.info(f"Created run directory: {paths.run_dir}")
+    Raises:
+        StorageError: If directory already exists (atomic check)
+    """
+    paths = RunPaths.create(task_name, run_id, user_id=user_id)
+
+    # 原子操作：如果目录已存在则抛出异常，避免竞态条件
+    try:
+        paths.run_dir.mkdir(parents=True, exist_ok=False)
+        paths.input_dir.mkdir()
+        logger.info(f"Created run directory: {paths.run_dir}")
+    except FileExistsError as e:
+        raise StorageError(f"Run directory already exists: {paths.run_dir}") from e
+
     return paths
 
 
@@ -195,16 +220,44 @@ def initialize_run_config(
     return config
 
 
-def list_runs() -> list[RunPaths]:
-    """List all existing run directories as RunPaths."""
+def list_runs(user_id: str | None = None) -> list[RunPaths]:
+    """List existing run directories as RunPaths.
+
+    Args:
+        user_id: Optional user ID to filter runs. If provided, only returns
+                 runs from that user's subdirectory. If None, returns all runs.
+
+    Returns:
+        List of RunPaths, sorted by modification time (newest first)
+    """
     runs = []
     if not RUNS_DIR.exists():
         ensure_dir(RUNS_DIR)
         return runs
 
-    for run_dir in sorted(RUNS_DIR.iterdir(), reverse=True):
-        if run_dir.is_dir():
-            runs.append(RunPaths.from_dir(run_dir))
+    # 如果指定了 user_id，只扫描该用户目录
+    if user_id:
+        user_dir = RUNS_DIR / user_id
+        if not user_dir.exists():
+            return runs
+        search_dirs = [user_dir]
+    else:
+        search_dirs = [RUNS_DIR]
+
+    for search_dir in search_dirs:
+        for item in search_dir.iterdir():
+            if item.is_dir():
+                # 跳过用户子目录本身（当 user_id 为 None 时）
+                if user_id is None and item.name.startswith("user_"):
+                    # 递归扫描用户目录
+                    runs.extend(list_runs(user_id=item.name))
+                elif user_id is not None and item.name.startswith("user_"):
+                    # 在用户目录内扫描时，跳过嵌套的用户目录
+                    continue
+                else:
+                    runs.append(RunPaths.from_dir(item))
+
+    runs.sort(key=lambda p: p.run_dir.stat().st_mtime, reverse=True)
     return runs
 
 
@@ -396,3 +449,142 @@ def validate_run_directory(paths: RunPaths) -> bool:
             return False
 
     return True
+
+
+# ============================================================================
+# User Data Persistence (新增)
+# ============================================================================
+
+# 用户数据文件（单个文件存储所有用户）
+USERS_JSON = DATA_DIR / "users.json"
+
+
+@dataclass
+class UserRecord:
+    """用户记录，存储用户的基本信息和任务关联。
+
+    所有用户数据存储在 data/users.json 中
+    """
+
+    user_id: str
+    created_at: str  # ISO 8601 timestamp
+    last_access: str  # ISO 8601 timestamp
+    run_count: int = 0  # 该用户创建的任务总数
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "UserRecord":
+        return cls(**data)
+
+
+def _load_users_data() -> dict[str, dict[str, Any]]:
+    """加载用户数据文件。
+
+    Returns:
+        用户数据字典，格式: {user_id: user_data}
+    """
+    if not USERS_JSON.exists():
+        return {}
+    return safe_json_loads_path(USERS_JSON) or {}
+
+
+def _save_users_data(data: dict[str, dict[str, Any]]) -> None:
+    """保存用户数据文件。
+
+    Args:
+        data: 用户数据字典
+    """
+    safe_json_write(USERS_JSON, data)
+    logger.debug(f"Saved users data, total users: {len(data)}")
+
+
+def load_user_record(user_id: str) -> UserRecord | None:
+    """加载用户记录。
+
+    Args:
+        user_id: 用户 ID
+
+    Returns:
+        UserRecord 对象，不存在返回 None
+    """
+    users_data = _load_users_data()
+    user_data = users_data.get(user_id)
+    if user_data:
+        return UserRecord.from_dict(user_data)
+    return None
+
+
+def save_user_record(record: UserRecord) -> None:
+    """保存用户记录。
+
+    Args:
+        record: UserRecord 对象
+    """
+    users_data = _load_users_data()
+    users_data[record.user_id] = record.to_dict()
+    _save_users_data(users_data)
+    logger.debug(f"Saved user record: {record.user_id}")
+
+
+def get_or_create_user(user_id: str) -> UserRecord:
+    """获取或创建用户记录。
+
+    Args:
+        user_id: 用户 ID
+
+    Returns:
+        UserRecord 对象
+    """
+    record = load_user_record(user_id)
+    if record is None:
+        # 创建新用户记录
+        record = UserRecord(
+            user_id=user_id,
+            created_at=format_timestamp(),
+            last_access=format_timestamp(),
+            run_count=0,
+        )
+        save_user_record(record)
+        logger.info(f"Created new user record: {user_id}")
+    else:
+        # 更新最后访问时间（仅在必要时保存）
+        old_access = record.last_access
+        record.last_access = format_timestamp()
+        if old_access != record.last_access:
+            save_user_record(record)
+    return record
+
+
+def increment_user_run_count(user_id: str) -> None:
+    """增加用户的任务计数。
+
+    Args:
+        user_id: 用户 ID
+    """
+    users_data = _load_users_data()
+    user_data = users_data.get(user_id)
+    if user_data:
+        user_data["run_count"] = user_data.get("run_count", 0) + 1
+        user_data["last_access"] = format_timestamp()
+        _save_users_data(users_data)
+        logger.info(f"Incremented run count for user: {user_id}")
+
+
+def list_all_users() -> list[UserRecord]:
+    """列出所有用户记录。
+
+    Returns:
+        UserRecord 对象列表，按最后访问时间倒序
+    """
+    users_data = _load_users_data()
+    users = []
+    for user_data in users_data.values():
+        try:
+            users.append(UserRecord.from_dict(user_data))
+        except Exception as e:
+            logger.warning(f"Failed to load user record: {e}")
+
+    users.sort(key=lambda u: u.last_access, reverse=True)
+    return users

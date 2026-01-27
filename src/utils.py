@@ -187,3 +187,62 @@ def humanize_number(n: int | float) -> str:
 def clamp(value: int | float, min_val: int | float, max_val: int | float) -> int | float:
     """Clamp value between min and max."""
     return max(min_val, min(value, max_val))
+
+
+# ============================================================================
+# Video Helpers
+# ============================================================================
+
+
+def get_video_duration(video_path: Path) -> float | None:
+    """获取视频时长（秒）。
+
+    Args:
+        video_path: 视频文件路径
+
+    Returns:
+        视频时长（秒），失败返回 None
+    """
+    try:
+        # 尝试使用 imageio_ffmpeg 的 ffprobe
+        import subprocess
+
+        result = subprocess.run(
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-show_entries",
+                "format=duration",
+                "-of",
+                "default=noprint_wrappers=1:nokey=1",
+                str(video_path),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if result.returncode == 0:
+            duration_str = result.stdout.strip()
+            if duration_str:
+                return float(duration_str)
+    except FileNotFoundError:
+        # ffprobe 不可用，尝试其他方法
+        pass
+    except Exception as e:
+        logger.warning(f"ffprobe failed for {video_path}: {e}")
+
+    try:
+        # 备用方案：使用 imageio
+        import imageio
+
+        reader = imageio.get_reader(str(video_path))
+        meta = reader.get_meta_data()
+        fps = meta.get("fps", 30.0)
+        total_frames = reader.count_frames()
+        reader.close()
+        duration = total_frames / fps if fps > 0 else 0
+        return float(duration)
+    except Exception as e:
+        logger.warning(f"Failed to get video duration for {video_path}: {e}")
+        return None

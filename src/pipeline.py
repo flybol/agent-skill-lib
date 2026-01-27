@@ -4,7 +4,9 @@ Handles task lifecycle: queued → running → done/failed.
 """
 
 import logging
+import queue
 import shutil
+import threading
 from pathlib import Path
 
 from constants import AGENT_MODE_REAL, RunState, DEFAULT_SEGMENTS, POSE_MAX_FRAMES
@@ -20,6 +22,7 @@ from storage import (
     write_features,
     append_log,
     get_video_path,
+    increment_user_run_count,
 )
 from steps import (
     extract_frames,
@@ -36,6 +39,73 @@ logger = logging.getLogger(__name__)
 
 
 # ============================================================================
+# 任务队列（单机 FIFO，避免并发冲突）
+# ============================================================================
+
+_task_queue: queue.Queue = queue.Queue()
+_worker_thread: threading.Thread | None = None
+_worker_lock = threading.Lock()
+
+
+def _get_worker() -> threading.Thread:
+    """获取或创建 worker 线程（单例模式）。"""
+    global _worker_thread
+
+    with _worker_lock:
+        if _worker_thread is None or not _worker_thread.is_alive():
+            _worker_thread = threading.Thread(
+                target=_worker_loop, name="PipelineWorker", daemon=True
+            )
+            _worker_thread.start()
+            logger.info("Pipeline worker thread started")
+
+    return _worker_thread
+
+
+def _worker_loop() -> None:
+    """Worker 线程主循环：串行执行队列中的任务。"""
+    while True:
+        try:
+            # 从队列获取任务（阻塞等待）
+            task_data = _task_queue.get()
+
+            if task_data is None:
+                # 哨兵值：退出信号
+                logger.info("Worker received shutdown signal")
+                break
+
+            paths, agent_mode = task_data
+
+            try:
+                logger.info(f"Worker executing task: {paths.run_dir.name}")
+                execute_run(paths, agent_mode)
+                logger.info(f"Worker completed task: {paths.run_dir.name}")
+            except Exception as e:
+                logger.error(f"Worker task failed: {e}")
+                # execute_run 内部已经更新了状态为 FAILED
+
+            finally:
+                _task_queue.task_done()
+
+        except Exception as e:
+            logger.error(f"Worker loop error: {e}")
+
+
+def get_queue_info() -> dict[str, int]:
+    """获取队列状态信息。
+
+    Returns:
+        包含队列大小和 worker 状态的字典
+    """
+    with _worker_lock:
+        return {
+            "queue_size": _task_queue.qsize(),
+            "worker_alive": _worker_thread is not None
+            and _worker_thread.is_alive(),
+        }
+
+
+# ============================================================================
 # Run Creation
 # ============================================================================
 
@@ -47,14 +117,24 @@ def create_run(
     llm_model: str = DEFAULT_LLM_MODEL,
     max_frames: int = POSE_MAX_FRAMES,
     num_segments: int = DEFAULT_SEGMENTS,
+    user_id: str | None = None,
 ) -> tuple[RunPaths, str]:
     """Create a new run and copy video input.
+
+    Args:
+        task_name: Name of the task
+        video_path: Path to the video file
+        agent_mode: Agent mode (mock/real)
+        llm_model: LLM model to use
+        max_frames: Maximum frames to extract
+        num_segments: Number of segments to divide video into
+        user_id: Optional user ID for multi-user isolation
 
     Returns:
         Tuple of (RunPaths, run_id)
     """
     run_id = generate_id("run_")
-    paths = create_run_directory(task_name, run_id)
+    paths = create_run_directory(task_name, run_id, user_id=user_id)
 
     # Copy video to input directory
     try:
@@ -69,6 +149,11 @@ def create_run(
 
     # Initialize config
     initialize_run_config(paths, agent_mode, llm_model, max_frames, num_segments)
+
+    # 更新用户的任务计数（如果有 user_id）
+    if user_id:
+        increment_user_run_count(user_id)
+
     return paths, run_id
 
 
@@ -207,27 +292,37 @@ def execute_run(paths: RunPaths, agent_mode: str | None = None) -> None:
 
 
 def execute_run_async(paths: RunPaths, agent_mode: str | None = None) -> None:
-    """Execute run in background for Streamlit.
+    """将任务加入队列，由 worker 线程串行执行。
 
-    This is a wrapper that can be called from Streamlit callbacks.
-    The actual execution happens synchronously in a separate thread/process.
+    Args:
+        paths: RunPaths for the run to execute
+        agent_mode: Override agent mode, or None to use config
 
-    Note: For MVP, this runs synchronously. True async execution
-    would require threading or multiprocessing with proper state management.
+    相比旧的直接创建线程方式，新方式使用队列保证：
+    1. 同一时间只有一个任务在执行（避免资源竞争）
+    2. 任务按 FIFO 顺序执行
+    3. 避免并发写文件导致的竞态条件
     """
-    import threading
+    # 确保 worker 线程已启动
+    _get_worker()
 
-    def _run():
-        try:
-            execute_run(paths, agent_mode)
-        except Exception as e:
-            logger.error(f"Background run failed: {e}")
-
-    thread = threading.Thread(target=_run, daemon=True)
-    thread.start()
-    logger.info(f"Started background run in thread: {paths.run_dir.name}")
+    # 将任务加入队列
+    _task_queue.put((paths, agent_mode))
+    queue_info = get_queue_info()
+    logger.info(
+        f"Task queued: {paths.run_dir.name}, "
+        f"queue size: {queue_info['queue_size']}"
+    )
 
 
-def start_background_run(paths, overwrite: bool = True):
-    # overwrite 目前在 pipeline 里没有用到，先吃掉参数保证兼容 UI
-    return execute_run_async(paths)
+def start_background_run(
+    paths, agent_mode: str | None = None, overwrite: bool = True
+) -> None:
+    """启动后台运行（兼容旧接口）。
+
+    Args:
+        paths: RunPaths for the run
+        agent_mode: Agent mode override
+        overwrite: 参数保留以兼容 UI，当前未使用
+    """
+    return execute_run_async(paths, agent_mode)
