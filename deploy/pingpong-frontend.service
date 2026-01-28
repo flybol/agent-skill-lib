@@ -1,0 +1,19 @@
+[Unit]
+Description=AI 乒乓球教练 - 前端 Web 服务
+After=network.target pingpong-backend.service
+
+[Service]
+Type=simple
+User=www-data
+WorkingDirectory=/opt/agent-skill-lib/frontend
+Environment="NODE_ENV=production"
+EnvironmentFile=/opt/agent-skill-lib/frontend/.env
+ExecStart=/usr/bin/npm run dev -- --host 0.0.0.0 --port 5173
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=pingpong-frontend
+
+[Install]
+WantedBy=multi-user.target

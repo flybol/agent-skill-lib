@@ -1,0 +1,19 @@
+[Unit]
+Description=AI 乒乓球教练 - 后端 API 服务
+After=network.target
+
+[Service]
+Type=simple
+User=www-data
+WorkingDirectory=/opt/agent-skill-lib/backend
+Environment="PATH=/opt/agent-skill-lib/backend/venv/bin"
+EnvironmentFile=/opt/agent-skill-lib/backend/.env
+ExecStart=/opt/agent-skill-lib/backend/venv/bin/python -m uvicorn src.main:app --host 0.0.0.0 --port 8000
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=pingpong-backend
+
+[Install]
+WantedBy=multi-user.target
