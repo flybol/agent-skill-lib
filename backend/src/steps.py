@@ -7,8 +7,8 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from errors import StepError, FrameExtractionError, FeatureComputationError
-from storage import RunPaths
+from .errors import StepError, FrameExtractionError, FeatureComputationError
+from .storage import RunPaths
 
 logger = logging.getLogger(__name__)
 
@@ -377,6 +377,7 @@ def run_llm_analysis(
     *,
     llm_model: str = "deepseek-chat",
     run_dir: Path | None = None,
+    target_player_config: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Run LLM analysis on the video.
 
@@ -384,11 +385,14 @@ def run_llm_analysis(
         frames_data: Data from extract_frames step
         features_data: Data from compute_features step
         agent_mode: "mock" or "real"
+        llm_model: llm model name
+        run_dir: output directory for frame paths
+        target_player_config: target player detection config
 
     Returns:
         Structured analysis report as dict
     """
-    from agent import analyze_video_with_fallback, analyze_images_with_fallback
+    from .agent import analyze_video_with_fallback, analyze_images_with_fallback
 
     # ✅ 统一构造（两种分支都复用），保证 Frame X at Ts 可引用
     frames_summary = _build_frames_summary_by_segment(
@@ -411,6 +415,7 @@ def run_llm_analysis(
                 num_segments=num_segments,
                 image_paths=[],
                 mode=agent_mode,
+                target_player_config=target_player_config,
             )
             return report.to_dict()
 
@@ -439,6 +444,7 @@ def run_llm_analysis(
             num_segments=num_segments,
             image_paths=image_paths,
             mode=agent_mode,
+            target_player_config=target_player_config,
         )
         return report.to_dict()
 
@@ -450,6 +456,7 @@ def run_llm_analysis(
         features_summary=features_summary,
         num_segments=num_segments,
         mode=agent_mode,
+        target_player_config=target_player_config,
     )
     return report.to_dict()
 
@@ -675,6 +682,7 @@ def assemble_report(
     frames_data: dict[str, Any],
     features_data: dict[str, Any],
     llm_result: dict[str, Any],
+    target_player_config: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Assemble final report with all analysis results.
 
@@ -682,6 +690,7 @@ def assemble_report(
         frames_data: Data from extract_frames step
         features_data: Data from compute_features step
         llm_result: Data from run_llm_analysis step
+        target_player_config: Target player detection config
 
     Returns:
         Complete report dictionary
@@ -692,6 +701,7 @@ def assemble_report(
             "frame_count": frames_data.get("frame_count", 0),
             "frame_rate": frames_data.get("frame_rate", 30),
             "segment_count": features_data.get("segment_count", 0),
+            "target_player": target_player_config or {},
         },
         "frames": frames_data,
         "features": features_data,
@@ -747,6 +757,10 @@ def run_full_analysis(
         strategy="per_segment",
     )
 
+    # Step 1.5: Detect target player (自动检测主要击球者)
+    from .player_detector import detect_target_player
+    target_player_config = detect_target_player(frames_data, output_dir)
+
     # Step 2: Compute features
     features_data = compute_features(frames_data, num_segments)
 
@@ -757,8 +771,9 @@ def run_full_analysis(
         agent_mode,
         llm_model=llm_model,
         run_dir=output_dir,  # 让 agent 能按约定找到 output_dir/frames 下的图片
+        target_player_config=target_player_config,  # 传递目标球员信息
     )
 
     # Step 4: Assemble report
-    report = assemble_report(frames_data, features_data, llm_result)
+    report = assemble_report(frames_data, features_data, llm_result, target_player_config)
     return report

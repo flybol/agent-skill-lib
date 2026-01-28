@@ -211,3 +211,5 @@ __marimo__/
 
 data/runs
 data/uploads
+backend/data/runs/
+backend/data/uploads/

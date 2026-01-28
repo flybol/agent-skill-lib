@@ -1,0 +1,372 @@
+/* AI 乒乓球教练 - 深色系高端主题
+ * 专业训练工具风格
+ */
+
+:root {
+    /* 背景色 - 深蓝黑 */
+    --bg-primary: #0E1117;
+    --bg-secondary: #151921;
+    --bg-card: #1A1E27;
+    --bg-elevated: #222732;
+
+    /* 主色调 - 科技蓝 */
+    --primary: #2F7CF6;
+    --primary-hover: #3B8AFF;
+    --primary-gradient: linear-gradient(135deg, #2F7CF6 0%, #5B9FFF 100%);
+
+    /* 辅助色 */
+    --success: #34D399;
+    --success-bg: rgba(52, 211, 153, 0.15);
+    --warning: #FBBF24;
+    --warning-bg: rgba(251, 191, 36, 0.15);
+    --error: #F87171;
+    --error-bg: rgba(248, 113, 113, 0.15);
+
+    /* 文字颜色 */
+    --text-primary: #E8EDF2;
+    --text-secondary: #9AA4B2;
+    --text-tertiary: #6B7280;
+    --text-muted: #4B5563;
+
+    /* 分割线 */
+    --divider: rgba(255, 255, 255, 0.06);
+    --divider-thick: rgba(255, 255, 255, 0.1);
+
+    /* 圆角 */
+    --radius-sm: 8px;
+    --radius-md: 12px;
+    --radius-lg: 16px;
+    --radius-xl: 20px;
+    --radius-2xl: 24px;
+
+    /* 阴影 - 深色系专用 */
+    --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.3);
+    --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.4);
+    --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.5);
+    --shadow-glow: 0 0 24px rgba(47, 124, 246, 0.3);
+
+    /* 间距 - 紧凑 */
+    --space-xs: 4px;
+    --space-sm: 8px;
+    --space-md: 12px;
+    --space-lg: 16px;
+    --space-xl: 20px;
+    --space-2xl: 24px;
+    --space-3xl: 32px;
+}
+
+/* 全局重置 */
+* {
+    box-sizing: border-box;
+}
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', Roboto, sans-serif;
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    line-height: 1.4;
+    letter-spacing: -0.01em;
+}
+
+/* 深色卡片 */
+.card-dark {
+    background: var(--bg-card);
+    border-radius: var(--radius-xl);
+    padding: var(--space-xl);
+    border: 1px solid var(--divider);
+}
+
+.card-elevated {
+    background: var(--bg-elevated);
+    box-shadow: var(--shadow-md);
+}
+
+/* 主按钮 - 渐变科技蓝 */
+.btn-primary {
+    background: var(--primary-gradient);
+    color: white;
+    border: none;
+    border-radius: var(--radius-lg);
+    padding: 14px 24px;
+    font-size: 16px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    box-shadow: 0 4px 16px rgba(47, 124, 246, 0.3);
+}
+
+.btn-primary:hover {
+    box-shadow: 0 6px 24px rgba(47, 124, 246, 0.4);
+    transform: translateY(-1px);
+}
+
+.btn-primary:active {
+    transform: translateY(0);
+}
+
+/* 次要按钮 */
+.btn-secondary {
+    background: var(--bg-elevated);
+    color: var(--text-primary);
+    border: 1px solid var(--divider);
+    border-radius: var(--radius-lg);
+    padding: 12px 20px;
+    font-size: 15px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+
+.btn-secondary:hover {
+    background: var(--bg-card);
+    border-color: var(--divider-thick);
+}
+
+/* 文字按钮 */
+.btn-ghost {
+    background: transparent;
+    color: var(--text-secondary);
+    border: none;
+    padding: 8px 12px;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: color 0.15s ease;
+}
+
+.btn-ghost:hover {
+    color: var(--text-primary);
+}
+
+/* 图标按钮 */
+.icon-btn {
+    width: 40px;
+    height: 40px;
+    border-radius: var(--radius-md);
+    background: transparent;
+    border: none;
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: all 0.15s ease;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.icon-btn:hover {
+    background: var(--bg-elevated);
+    color: var(--text-primary);
+}
+
+/* 上传区域 */
+.upload-area {
+    background: var(--bg-secondary);
+    border: 2px dashed var(--divider-thick);
+    border-radius: var(--radius-lg);
+    padding: var(--space-2xl);
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.upload-area:hover {
+    border-color: var(--primary);
+    background: rgba(47, 124, 246, 0.05);
+}
+
+.upload-area.dragging {
+    border-color: var(--primary);
+    background: rgba(47, 124, 246, 0.1);
+}
+
+/* 进度条 */
+.progress-bar {
+    height: 4px;
+    background: var(--bg-elevated);
+    border-radius: 2px;
+    overflow: hidden;
+}
+
+.progress-bar-fill {
+    height: 100%;
+    background: var(--primary-gradient);
+    border-radius: 2px;
+    transition: width 0.3s ease;
+}
+
+/* 检查清单项 */
+.checklist-item {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-md);
+    padding: var(--space-md) 0;
+    border-bottom: 1px solid var(--divider);
+}
+
+.checklist-item:last-child {
+    border-bottom: none;
+}
+
+.checklist-icon {
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: var(--success-bg);
+    color: var(--success);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    margin-top: 2px;
+}
+
+.checklist-text {
+    flex: 1;
+}
+
+.checklist-title {
+    font-size: 15px;
+    font-weight: 500;
+    color: var(--text-primary);
+    margin-bottom: 2px;
+}
+
+.checklist-desc {
+    font-size: 13px;
+    color: var(--text-secondary);
+    line-height: 1.4;
+}
+
+/* 分割线 */
+.divider {
+    height: 1px;
+    background: var(--divider);
+    margin: var(--space-xl) 0;
+}
+
+.divider-thick {
+    height: 1px;
+    background: var(--divider-thick);
+    margin: var(--space-xl) 0;
+}
+
+/* 标签 */
+.tag {
+    display: inline-flex;
+    align-items: center;
+    padding: 4px 10px;
+    border-radius: var(--radius-sm);
+    font-size: 12px;
+    font-weight: 500;
+    background: var(--bg-elevated);
+    color: var(--text-secondary);
+}
+
+.tag-blue {
+    background: rgba(47, 124, 246, 0.15);
+    color: var(--primary);
+}
+
+.tag-green {
+    background: var(--success-bg);
+    color: var(--success);
+}
+
+/* 状态指示器 */
+.status-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    display: inline-block;
+}
+
+.status-dot.active {
+    background: var(--success);
+    box-shadow: 0 0 8px var(--success);
+}
+
+.status-dot.processing {
+    background: var(--primary);
+    box-shadow: 0 0 8px var(--primary);
+    animation: pulse 2s ease-in-out infinite;
+}
+
+/* 动画 */
+@keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+}
+
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+        transform: translateY(8px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.fade-in {
+    animation: fadeIn 0.3s ease-out;
+}
+
+/* 文字样式 */
+.text-title {
+    font-size: 17px;
+    font-weight: 600;
+    color: var(--text-primary);
+    letter-spacing: -0.02em;
+}
+
+.text-heading {
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.text-body {
+    font-size: 15px;
+    font-weight: 400;
+    color: var(--text-secondary);
+}
+
+.text-caption {
+    font-size: 13px;
+    color: var(--text-secondary);
+}
+
+.text-small {
+    font-size: 12px;
+    color: var(--text-tertiary);
+}
+
+/* 安全区域 */
+.safe-top {
+    padding-top: env(safe-area-inset-top);
+}
+
+.safe-bottom {
+    padding-bottom: env(safe-area-inset-bottom);
+}
+
+/* 滚动条样式 */
+::-webkit-scrollbar {
+    width: 4px;
+}
+
+::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+    background: var(--divider-thick);
+    border-radius: 2px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.15);
+}

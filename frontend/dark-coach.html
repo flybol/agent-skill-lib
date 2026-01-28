@@ -1,0 +1,475 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>乒乓数字教练 - AI 分析</title>
+    <style>
+        /* 深色系高端主题 - 乒乓球 AI 教练 */
+        :root {
+            --bg-primary: #0E1117;
+            --bg-secondary: #151921;
+            --bg-card: #1A1E27;
+            --bg-elevated: #222732;
+            --primary: #2F7CF6;
+            --primary-hover: #3B8AFF;
+            --primary-gradient: linear-gradient(135deg, #2F7CF6 0%, #5B9FFF 100%);
+            --text-primary: #E8EDF2;
+            --text-secondary: #9AA4B2;
+            --text-tertiary: #6B7280;
+            --text-muted: #4B5563;
+            --divider: rgba(255, 255, 255, 0.06);
+            --divider-thick: rgba(255, 255, 255, 0.1);
+            --success: #34D399;
+            --success-bg: rgba(52, 211, 153, 0.15);
+            --warning: #FBBF24;
+            --warning-bg: rgba(251, 191, 36, 0.15);
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', Roboto, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            -webkit-font-smoothing: antialiased;
+            line-height: 1.4;
+            letter-spacing: -0.01em;
+        }
+
+        .icon-btn {
+            width: 40px;
+            height: 40px;
+            border-radius: 10px;
+            background: transparent;
+            border: none;
+            color: var(--text-secondary);
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.15s ease;
+        }
+
+        .icon-btn:hover {
+            background: var(--bg-elevated);
+            color: var(--text-primary);
+        }
+
+        .btn-primary {
+            background: var(--primary-gradient);
+            color: white;
+            border: none;
+            border-radius: 14px;
+            padding: 16px 24px;
+            font-size: 17px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            box-shadow: 0 4px 16px rgba(47, 124, 246, 0.3);
+        }
+
+        .btn-primary:hover:not(:disabled) {
+            box-shadow: 0 6px 24px rgba(47, 124, 246, 0.4);
+            transform: translateY(-1px);
+        }
+
+        .btn-primary:disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
+        }
+
+        .btn-secondary {
+            background: var(--bg-elevated);
+            color: var(--text-primary);
+            border: 1px solid var(--divider);
+            border-radius: 14px;
+            padding: 14px 20px;
+            font-size: 15px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.15s ease;
+        }
+
+        .btn-secondary:hover {
+            background: var(--bg-card);
+            border-color: var(--divider-thick);
+        }
+
+        .card-dark {
+            background: var(--bg-card);
+            border-radius: 20px;
+            padding: 20px;
+            border: 1px solid var(--divider);
+        }
+
+        .upload-area {
+            background: var(--bg-secondary);
+            border: 2px dashed var(--divider-thick);
+            border-radius: 14px;
+            padding: 24px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .upload-area:hover {
+            border-color: var(--primary);
+            background: rgba(47, 124, 246, 0.05);
+        }
+
+        .upload-area.dragging {
+            border-color: var(--primary);
+            background: rgba(47, 124, 246, 0.1);
+        }
+
+        .checklist-item {
+            display: flex;
+            align-items: flex-start;
+            gap: 12px;
+            padding: 12px 0;
+            border-bottom: 1px solid var(--divider);
+        }
+
+        .checklist-item:last-child {
+            border-bottom: none;
+        }
+
+        .checklist-icon {
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            background: var(--success-bg);
+            color: var(--success);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+            margin-top: 2px;
+        }
+
+        .checklist-text {
+            flex: 1;
+        }
+
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+                transform: translateY(8px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .fade-in {
+            animation: fadeIn 0.4s ease-out;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .spinner {
+            width: 32px;
+            height: 32px;
+            border: 3px solid var(--bg-elevated);
+            border-top-color: var(--primary);
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+    </style>
+</head>
+<body>
+    <!-- 顶部导航栏 -->
+    <header style="
+        position: sticky;
+        top: 0;
+        z-index: 50;
+        background: rgba(14, 17, 23, 0.85);
+        backdrop-filter: blur(20px);
+        -webkit-backdrop-filter: blur(20px);
+        border-bottom: 1px solid var(--divider);
+        padding: 12px 16px;
+    ">
+        <div style="display: flex; align-items: center; justify-content: space-between;">
+            <button class="icon-btn" onclick="history.back()">
+                <svg width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/>
+                </svg>
+            </button>
+
+            <h1 style="font-size: 16px; font-weight: 600; color: var(--text-primary);">乒乓数字教练 v1.0</h1>
+
+            <button class="icon-btn">
+                <svg width="20" height="20" fill="currentColor" viewBox="0 0 24 24">
+                    <circle cx="12" cy="5" r="2"/>
+                    <circle cx="12" cy="12" r="2"/>
+                    <circle cx="12" cy="19" r="2"/>
+                </svg>
+            </button>
+        </div>
+
+        <p style="
+            text-align: center;
+            font-size: 13px;
+            color: var(--text-secondary);
+            margin-top: 8px;
+            padding: 0 20px;
+        ">上传训练视频，生成 AI 教练报告</p>
+    </header>
+
+    <!-- 主内容区 -->
+    <main style="padding: 16px;">
+        <!-- 核心操作卡片 -->
+        <section class="card-dark fade-in" style="margin-bottom: 16px;">
+            <div style="margin-bottom: 16px;">
+                <h2 style="font-size: 16px; font-weight: 600; color: var(--text-primary); margin-bottom: 4px;">上传训练视频</h2>
+                <p style="font-size: 13px; color: var(--text-secondary);">选择 1~3 秒内的乒乓球训练视频（最大 10MB）</p>
+            </div>
+
+            <!-- 上传区域 -->
+            <div id="uploadArea" class="upload-area" style="margin-bottom: 16px;" onclick="document.getElementById('fileInput').click()">
+                <svg width="48" height="48" fill="none" style="color: var(--primary); margin-bottom: 12px;" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/>
+                </svg>
+                <p style="font-size: 13px; color: var(--text-secondary); margin-bottom: 4px;">点击或拖拽上传视频文件</p>
+                <p style="font-size: 12px; color: var(--text-tertiary);">支持 MP4、MOV 格式</p>
+
+                <video id="videoPreview" style="display: none; width: 100%; border-radius: 12px; margin-top: 16px; margin-bottom: 12px;" controls></video>
+                <p id="fileInfo" style="display: none; font-size: 13px; color: var(--text-secondary);"></p>
+            </div>
+
+            <input type="file" id="fileInput" accept="video/mp4,video/quicktime" style="display: none;">
+
+            <div style="display: flex; gap: 12px; margin-bottom: 20px;">
+                <button class="btn-secondary" style="flex: 1;" onclick="document.getElementById('fileInput').click()">选择文件</button>
+            </div>
+
+            <button id="analyzeBtn" class="btn-primary" style="width: 100%;" disabled>🚀 开始分析</button>
+        </section>
+
+        <!-- 分割线 -->
+        <div style="height: 1px; background: var(--divider); margin: 16px 0;"></div>
+
+        <!-- 分析结果模块 -->
+        <section class="fade-in" style="animation-delay: 0.1s;">
+            <h2 style="font-size: 16px; font-weight: 600; color: var(--text-primary); margin-bottom: 8px;">训练结果</h2>
+            <p style="font-size: 13px; color: var(--text-secondary); margin-bottom: 16px;">AI 分析报告：为您列出 3 个问题与 3 个改进措施</p>
+
+            <div style="
+                background: var(--bg-card);
+                border-radius: 20px;
+                border: 1px solid var(--divider);
+                overflow: hidden;
+            ">
+                <!-- 占位状态 -->
+                <div id="resultPlaceholder" style="padding: 40px 20px; text-align: center;">
+                    <svg width="48" height="48" fill="none" style="color: var(--text-muted); margin: 0 auto 12px;" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+                    </svg>
+                    <p style="font-size: 13px; color: var(--text-tertiary);">等待分析完成...</p>
+                </div>
+
+                <!-- 分析进度 -->
+                <div id="analyzingState" style="display: none; padding: 32px 20px; text-align: center;">
+                    <div class="spinner" style="margin: 0 auto 16px;"></div>
+                    <p style="font-size: 15px; color: var(--text-secondary);">AI 正在分析中...</p>
+                    <p style="font-size: 12px; color: var(--text-tertiary); margin-top: 4px;">预计需要 10~15 秒</p>
+                </div>
+
+                <!-- 结果内容 -->
+                <div id="resultContent" style="display: none;"></div>
+            </div>
+        </section>
+    </main>
+
+    <div style="height: 20px;"></div>
+
+    <script>
+        let selectedFile = null;
+        let isAnalyzing = false;
+
+        // 文件选择
+        document.getElementById('fileInput').addEventListener('change', (e) => {
+            if (e.target.files.length > 0) {
+                const file = e.target.files[0];
+
+                if (file.size > 10 * 1024 * 1024) {
+                    alert('视频文件不能超过 10MB');
+                    return;
+                }
+
+                selectedFile = file;
+                const videoPreview = document.getElementById('videoPreview');
+                const fileInfo = document.getElementById('fileInfo');
+                const analyzeBtn = document.getElementById('analyzeBtn');
+
+                videoPreview.src = URL.createObjectURL(file);
+                fileInfo.textContent = `${file.name} (${formatFileSize(file.size)})`;
+                videoPreview.style.display = 'block';
+                fileInfo.style.display = 'block';
+                analyzeBtn.disabled = false;
+            }
+        });
+
+        // 拖拽上传
+        const uploadArea = document.getElementById('uploadArea');
+        uploadArea.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            uploadArea.classList.add('dragging');
+        });
+        uploadArea.addEventListener('dragleave', () => {
+            uploadArea.classList.remove('dragging');
+        });
+        uploadArea.addEventListener('drop', (e) => {
+            e.preventDefault();
+            uploadArea.classList.remove('dragging');
+            if (e.dataTransfer.files.length > 0) {
+                const file = e.dataTransfer.files[0];
+                if (file.size <= 10 * 1024 * 1024) {
+                    selectedFile = file;
+                    const videoPreview = document.getElementById('videoPreview');
+                    const fileInfo = document.getElementById('fileInfo');
+                    const analyzeBtn = document.getElementById('analyzeBtn');
+                    videoPreview.src = URL.createObjectURL(file);
+                    fileInfo.textContent = `${file.name} (${formatFileSize(file.size)})`;
+                    videoPreview.style.display = 'block';
+                    fileInfo.style.display = 'block';
+                    analyzeBtn.disabled = false;
+                }
+            }
+        });
+
+        // 开始分析
+        document.getElementById('analyzeBtn').addEventListener('click', () => {
+            if (!selectedFile || isAnalyzing) return;
+
+            isAnalyzing = true;
+            document.getElementById('resultPlaceholder').style.display = 'none';
+            document.getElementById('analyzingState').style.display = 'block';
+            document.getElementById('analyzeBtn').disabled = true;
+            document.getElementById('analyzeBtn').textContent = '分析中...';
+
+            // 模拟分析
+            setTimeout(() => {
+                showResults();
+            }, 3000);
+        });
+
+        function showResults() {
+            const resultContent = document.getElementById('resultContent');
+            document.getElementById('analyzingState').style.display = 'none';
+            resultContent.style.display = 'block';
+
+            resultContent.innerHTML = `
+                <div style="padding: 20px;">
+                    <div style="padding-bottom: 12px; margin-bottom: 12px; border-bottom: 1px solid var(--divider);">
+                        <p style="font-size: 13px; color: var(--primary); font-weight: 500;">分析完成</p>
+                        <p style="font-size: 16px; font-weight: 600; color: var(--text-primary); margin-top: 4px;">
+                            综合评分: <span style="color: var(--success); font-size: 24px; font-weight: 600;">78</span>
+                        </p>
+                    </div>
+
+                    <div style="margin-bottom: 20px;">
+                        <p style="font-size: 13px; color: var(--warning); margin-bottom: 12px;">发现 3 个问题</p>
+
+                        <div class="checklist-item">
+                            <div class="checklist-icon" style="background: var(--warning-bg); color: var(--warning);">
+                                <svg width="12" height="12" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
+                                </svg>
+                            </div>
+                            <div class="checklist-text">
+                                <p style="font-size: 15px; font-weight: 500; color: var(--text-primary);">反手击球力度不足</p>
+                                <p style="font-size: 13px; color: var(--text-secondary);">手腕力量需要加强，建议每天进行专项练习</p>
+                            </div>
+                        </div>
+
+                        <div class="checklist-item">
+                            <div class="checklist-icon" style="background: var(--warning-bg); color: var(--warning);">
+                                <svg width="12" height="12" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
+                                </svg>
+                            </div>
+                            <div class="checklist-text">
+                                <p style="font-size: 15px; font-weight: 500; color: var(--text-primary);">步伐移动不够灵活</p>
+                                <p style="font-size: 13px; color: var(--text-secondary);">左右移动时重心偏高，影响反应速度</p>
+                            </div>
+                        </div>
+
+                        <div class="checklist-item">
+                            <div class="checklist-icon" style="background: var(--warning-bg); color: var(--warning);">
+                                <svg width="12" height="12" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
+                                </svg>
+                            </div>
+                            <div class="checklist-text">
+                                <p style="font-size: 15px; font-weight: 500; color: var(--text-primary);">击球时机偏晚</p>
+                                <p style="font-size: 13px; color: var(--text-secondary);">需要提高预判能力，提前做好击球准备</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div>
+                        <p style="font-size: 13px; color: var(--success); margin-bottom: 12px;">改进措施</p>
+
+                        <div class="checklist-item">
+                            <div class="checklist-icon">
+                                <svg width="12" height="12" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+                                </svg>
+                            </div>
+                            <div class="checklist-text">
+                                <p style="font-size: 15px; font-weight: 500; color: var(--text-primary);">加强手腕力量训练</p>
+                                <p style="font-size: 13px; color: var(--text-secondary);">使用握力器每天练习 3 组，每组 20 次</p>
+                            </div>
+                        </div>
+
+                        <div class="checklist-item">
+                            <div class="checklist-icon">
+                                <svg width="12" height="12" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+                                </svg>
+                            </div>
+                            <div class="checklist-text">
+                                <p style="font-size: 15px; font-weight: 500; color: var(--text-primary);">练习低重心移动</p>
+                                <p style="font-size: 13px; color: var(--text-secondary);">半蹲姿势左右滑步，保持膝盖微曲状态</p>
+                            </div>
+                        </div>
+
+                        <div class="checklist-item">
+                            <div class="checklist-icon">
+                                <svg width="12" height="12" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+                                </svg>
+                            </div>
+                            <div class="checklist-text">
+                                <p style="font-size: 15px; font-weight: 500; color: var(--text-primary);">提高预判反应速度</p>
+                                <p style="font-size: 13px; color: var(--text-secondary);">通过多球训练练习快速判断球的落点</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+
+            isAnalyzing = false;
+            document.getElementById('analyzeBtn').textContent = '🚀 重新分析';
+            document.getElementById('analyzeBtn').disabled = false;
+        }
+
+        function formatFileSize(bytes) {
+            if (bytes === 0) return '0 B';
+            const k = 1024;
+            const sizes = ['B', 'KB', 'MB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+        }
+    </script>
+</body>
+</html>

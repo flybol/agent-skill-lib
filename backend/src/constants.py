@@ -9,6 +9,7 @@ from pathlib import Path
 # ============================================================================
 
 APP_TITLE = "CoachAgent - Sports Video Analysis"
+APP_SUBTITLE = "AI-powered sports technique analysis"
 
 
 # ============================================================================
@@ -59,7 +60,6 @@ class RunState(str, Enum):
 SUPPORTED_VIDEO_EXTENSIONS = {".mp4", ".mov", ".avi", ".mkv", ".webm"}
 MAX_UPLOAD_MB = 10
 MAX_BYTES = MAX_UPLOAD_MB * 1024 * 1024
-MAX_VIDEO_DURATION_SEC = 5.0  # 最大视频时长（秒）
 
 # ============================================================================
 # Processing Limits
@@ -68,6 +68,11 @@ MAX_VIDEO_DURATION_SEC = 5.0  # 最大视频时长（秒）
 POSE_MAX_FRAMES = 1000
 DEFAULT_SEGMENTS = 2
 MAX_FRAMES_PER_SEGMENT = 120
+
+# 视频抽帧配置（用于实际分析流程）
+MAX_FRAMES = 20  # 总共最多抽取20帧
+FRAMES_PER_SEGMENT = 5  # 每个分段抽取5帧
+DEFAULT_NUM_SEGMENTS = 2  # 默认分为4个分段
 
 
 # ============================================================================
@@ -78,11 +83,6 @@ MAX_FRAMES_PER_SEGMENT = 120
 AGENT_MODE_MOCK = "mock"
 AGENT_MODE_REAL = "real"
 
-# Debug mode（UI 层面的调试模式）
-# True: 显示完整的原始 JSON 和调试信息
-# False: 仅显示用户友好的分析结果
-DEBUG_MODE_ENABLED = False
-
 # LLM output structure requirements
 PROBLEMS_COUNT = 3
 IMPROVEMENTS_COUNT = 3
@@ -91,6 +91,10 @@ IMPROVEMENTS_COUNT = 3
 # ============================================================================
 # UI Refresh Constants
 # ============================================================================
+
+PROGRESS_REFRESH_INTERVAL_MS = 1000  # Refresh progress every 1 second
+AUTO_REFRESH_THRESHOLD_SEC = 30  # Stop auto-refresh after 30 seconds idle
+
 
 # constants.py
 
