@@ -1,19 +1,31 @@
 [Unit]
-Description=AI 乒乓球教练 - 后端 API 服务
-After=network.target
+Description=AI 乒乓球教练 - 后端 API 服务（pingpong-backend）
+After=network-online.target
+Wants=network-online.target
 
 [Service]
 Type=simple
-User=www-data
+User=deploy
+Group=deploy
 WorkingDirectory=/opt/coachagent/backend
-Environment="PATH=/opt/coachagent/backend/venv/bin"
-EnvironmentFile=/opt/coachagent/backend/.env
-ExecStart=/opt/coachagent/backend/venv/bin/python -m uvicorn src.main:app --host 0.0.0.0 --port 8000
+
+# 使用虚拟环境 + 保留系统 PATH，避免找不到系统命令/库
+Environment="PATH=/opt/coachagent/backend/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin"
+Environment="PYTHONUNBUFFERED=1"
+
+# .env 不存在也不阻断启动（加了前缀 -）
+EnvironmentFile=-/opt/coachagent/backend/.env
+
+# 启动 FastAPI（按你原入口：src.main:app）
+ExecStart=/opt/coachagent/backend/.venv/bin/python -m uvicorn src.main:app --host 0.0.0.0 --port 8000
+
 Restart=always
-RestartSec=10
+RestartSec=3
+
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=pingpong-backend
+LimitNOFILE=65535
 
 [Install]
 WantedBy=multi-user.target
