@@ -1,19 +1,29 @@
 [Unit]
-Description=AI 乒乓球教练 - 前端 Web 服务
-After=network.target pingpong-backend.service
+Description=AI 乒乓球教练 - 前端 Web 服务（pingpong-frontend）
+After=network-online.target pingpong-backend.service
+Wants=network-online.target
+Requires=pingpong-backend.service
 
 [Service]
 Type=simple
-User=www-data
+User=deploy
+Group=deploy
 WorkingDirectory=/opt/coachagent/frontend
+
 Environment="NODE_ENV=production"
-EnvironmentFile=/opt/coachagent/frontend/.env
-ExecStart=/usr/bin/npm run preview  -- --host 0.0.0.0 --port 8501
+Environment="PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/bin"
+EnvironmentFile=-/opt/coachagent/frontend/.env
+
+# ✅ 生产：只运行预览服务（dist 必须已存在）
+ExecStart=/usr/bin/npm run preview -- --host 0.0.0.0 --port 8501
+
 Restart=always
-RestartSec=10
+RestartSec=3
+TimeoutStartSec=60
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=pingpong-frontend
+LimitNOFILE=65535
 
 [Install]
 WantedBy=multi-user.target
