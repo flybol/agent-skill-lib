@@ -171,7 +171,20 @@ export async function deleteTask(taskId) {
  * WebSocket 连接 - 实时接收任务状态更新
  */
 export function connectTaskWebSocket(taskId, onMessage, onError) {
-    const wsUrl = `${API_BASE_URL.replace('http', 'ws')}/ws/tasks/${taskId}`;
+    // 构造 WebSocket URL
+    // 1. 生产环境使用相对路径：VITE_API_URL=/api -> ws://.../ws/tasks/...
+    // 2. 本地开发使用绝对路径：VITE_API_URL=http://... -> ws://...
+    let wsUrl;
+    if (API_BASE_URL.startsWith('/')) {
+        // 相对路径：使用当前页面的协议和主机
+        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const host = window.location.host;
+        wsUrl = `${protocol}//${host}/ws/tasks/${taskId}`;
+    } else {
+        // 绝对路径：替换协议
+        wsUrl = `${API_BASE_URL.replace('http:', 'ws:').replace('https:', 'wss:')}/ws/tasks/${taskId}`;
+    }
+
     const ws = new WebSocket(wsUrl);
 
     ws.onopen = () => {
