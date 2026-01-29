@@ -449,6 +449,8 @@ app = FastAPI(
     description="提供视频上传、分析任务管理、结果查询等功能",
     version="1.0.0",
     lifespan=lifespan,
+    docs_url=None,      # 关闭 Swagger UI
+    redoc_url=None,     # 关闭 ReDoc
 )
 
 # CORS 中间件 - 必须在应用创建后添加
