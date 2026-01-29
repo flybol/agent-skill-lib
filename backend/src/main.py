@@ -165,6 +165,25 @@ class TaskManager:
 
         return task_id
 
+    def create_task_with_id(self, task_id: str, name: str, video_path: str):
+        """使用指定的 ID 创建新任务"""
+        timestamp = datetime.now().isoformat()
+
+        self.tasks[task_id] = {
+            "task_id": task_id,
+            "name": name,
+            "status": "pending",
+            "progress": 0,
+            "stage": None,
+            "video_path": video_path,
+            "created_at": timestamp,
+            "updated_at": timestamp,
+            "error": None,
+            "result": None,
+        }
+
+        return task_id
+
     def get_task(self, task_id: str) -> Optional[dict]:
         """获取任务"""
         return self.tasks.get(task_id)
@@ -565,16 +584,18 @@ async def upload_video(
         logger.warning(f"无法验证视频时长，继续处理: {e}")
 
     # 创建任务
-    task_id_new = task_manager.create_task(
-        file.filename or "未命名任务", str(video_path)
+    task_manager.create_task_with_id(
+        task_id,
+        file.filename or "未命名任务",
+        str(video_path)
     )
-    task_manager.add_to_queue(task_id_new)
+    task_manager.add_to_queue(task_id)
 
     return UploadResponse(
         success=True,
-        task_id=task_id_new,
+        task_id=task_id,
         message="视频上传成功",
-        task=TaskResponse(**task_manager.get_task(task_id_new)),
+        task=TaskResponse(**task_manager.get_task(task_id)),
     )
 
 
