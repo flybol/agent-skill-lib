@@ -5,10 +5,10 @@ After=network.target pingpong-backend.service
 [Service]
 Type=simple
 User=www-data
-WorkingDirectory=/opt/agent-skill-lib/frontend
+WorkingDirectory=/opt/coachagent/frontend
 Environment="NODE_ENV=production"
-EnvironmentFile=/opt/agent-skill-lib/frontend/.env
-ExecStart=/usr/bin/npm run dev -- --host 0.0.0.0 --port 5173
+EnvironmentFile=/opt/coachagent/frontend/.env
+ExecStart=/usr/bin/npm run dev -- --host 0.0.0.0 --port 8501
 Restart=always
 RestartSec=10
 StandardOutput=journal

@@ -32,6 +32,17 @@ echo -e "${YELLOW}[1/7] 检查系统依赖...${NC}"
 command -v python3 >/dev/null 2>&1 || { echo -e "${RED}错误: 未安装 Python 3${NC}"; exit 1; }
 command -v node >/dev/null 2>&1 || { echo -e "${RED}错误: 未安装 Node.js${NC}"; exit 1; }
 command -v npm >/dev/null 2>&1 || { echo -e "${RED}错误: 未安装 npm${NC}"; exit 1; }
+
+# 检查并安装 uv（Python 包管理器）
+if ! command -v uv >/dev/null 2>&1; then
+    echo -e "${YELLOW}  安装 uv 包管理器...${NC}"
+    curl -LsSf https://astral.sh/uv/install.sh | sh
+    export PATH="$HOME/.local/bin:$PATH"
+    echo -e "${GREEN}  ✓ uv 安装完成${NC}"
+else
+    echo -e "${GREEN}  ✓ uv 已安装${NC}"
+fi
+
 echo -e "${GREEN}✓ 系统依赖检查通过${NC}"
 echo ""
 
@@ -49,12 +60,13 @@ echo -e "${GREEN}✓ 项目文件复制完成${NC}"
 echo ""
 
 # 步骤 4: 安装后端依赖
-echo -e "${YELLOW}[4/7] 安装后端 Python 依赖...${NC}"
+echo -e "${YELLOW}[4/7] 安装后端 Python 依赖（使用 uv）...${NC}"
 cd "$INSTALL_DIR/backend"
-python3 -m venv venv
+
+# 使用 uv 创建虚拟环境并安装依赖
+uv venv
 source venv/bin/activate
-pip install --upgrade pip
-pip install -r requirements.txt
+uv pip install -r requirements.txt
 echo -e "${GREEN}✓ 后端依赖安装完成${NC}"
 echo ""
 

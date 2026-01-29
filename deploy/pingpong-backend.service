@@ -5,10 +5,10 @@ After=network.target
 [Service]
 Type=simple
 User=www-data
-WorkingDirectory=/opt/agent-skill-lib/backend
-Environment="PATH=/opt/agent-skill-lib/backend/venv/bin"
-EnvironmentFile=/opt/agent-skill-lib/backend/.env
-ExecStart=/opt/agent-skill-lib/backend/venv/bin/python -m uvicorn src.main:app --host 0.0.0.0 --port 8000
+WorkingDirectory=/opt/coachagent/backend
+Environment="PATH=/opt/coachagent/backend/venv/bin"
+EnvironmentFile=/opt/coachagent/backend/.env
+ExecStart=/opt/coachagent/backend/venv/bin/python -m uvicorn src.main:app --host 0.0.0.0 --port 8000
 Restart=always
 RestartSec=10
 StandardOutput=journal
