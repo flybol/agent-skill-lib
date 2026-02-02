@@ -2,7 +2,9 @@
  * API 客户端 - 处理所有后端 API 调用
  */
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+// 生产环境使用相对路径，开发环境可通过 VITE_API_URL 覆盖
+// 空字符串表示使用浏览器当前域名
+const API_BASE_URL = import.meta.env.VITE_API_URL ?? '';
 
 // 调试：输出 API 地址
 console.log('API Base URL:', API_BASE_URL);

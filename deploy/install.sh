@@ -93,8 +93,9 @@ EOF
 fi
 
 # 配置前端环境变量
-sed -i "s|VITE_API_URL=.*|VITE_API_URL=http://$(hostname -I | awk '{print $1}'):8000|" "$INSTALL_DIR/frontend/.env"
-echo -e "${GREEN}✓ 前端 API 地址已配置为: http://$(hostname -I | awk '{print $1}'):8000${NC}"
+# 注意：前端代码已包含 /api 前缀，所以这里设置为空
+sed -i "s|VITE_API_URL=.*|VITE_API_URL=|" "$INSTALL_DIR/frontend/.env"
+echo -e "${GREEN}✓ 前端 API 地址已配置为相对路径（空字符串，使用浏览器当前域名）${NC}"
 echo ""
 
 # 步骤 7: 安装系统服务

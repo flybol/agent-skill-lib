@@ -215,12 +215,65 @@ class App {
 
     async loadInitialData() {
         try {
-            // 加载历史任务数据
-            const historyData = await getHistoryTasks(1, 20);
-            console.log('已加载历史任务:', historyData);
+            // 检查 URL 参数，支持分享链接直接打开分析结果
+            const urlParams = new URLSearchParams(window.location.search);
+            const sharedTaskId = urlParams.get('task_id');
+
+            if (sharedTaskId) {
+                // 有分享的任务 ID，加载并显示该分析结果
+                console.log('检测到分享链接，加载任务:', sharedTaskId);
+                await this.loadSharedResult(sharedTaskId);
+            } else {
+                // 正常加载历史任务数据
+                const historyData = await getHistoryTasks(1, 20);
+                console.log('已加载历史任务:', historyData);
+            }
         } catch (error) {
             console.error('加载初始数据失败:', error);
-            // 使用模拟数据作为后备
+        }
+    }
+
+    /**
+     * 加载分享的分析结果
+     * 用于通过链接直接查看他人的分析报告
+     */
+    async loadSharedResult(taskId) {
+        try {
+            this.analysisResult.showLoading();
+            const result = await getAnalysisResult(taskId);
+
+            if (result && result.status === 'completed') {
+                // 显示分享的结果
+                this.displayAnalysisResult(result);
+
+                // 显示提示消息
+                showToast('正在查看分享的分析结果', 'info');
+
+                // 隐藏上传区域，只显示结果
+                const uploadSection = document.querySelector('.card-dark');
+                if (uploadSection) {
+                    uploadSection.style.display = 'none';
+                }
+
+                // 隐藏目标球员确认模块
+                const targetPlayerContainer = document.getElementById('targetPlayerConfirmContainer');
+                if (targetPlayerContainer) {
+                    targetPlayerContainer.style.display = 'none';
+                }
+
+                // 修改标题为"分享的分析结果"
+                const titleElement = document.querySelector('h2');
+                if (titleElement) {
+                    titleElement.textContent = '分享的分析结果';
+                }
+            } else {
+                this.analysisResult.showEmpty();
+                showToast('该分析结果不存在或未完成', 'error');
+            }
+        } catch (error) {
+            console.error('加载分享结果失败:', error);
+            this.analysisResult.showEmpty();
+            showToast('加载分享结果失败: ' + error.message, 'error');
         }
     }
 
@@ -470,14 +523,38 @@ class App {
             const result = await getAnalysisResult(taskId);
 
             if (result && result.status === 'completed') {
+                // 确保 result 有必要的字段
+                if (!result.summary) result.summary = {};
+                if (!result.suggestions) result.suggestions = [];
+                if (!result.details) result.details = {};
+                if (!result.key_frames) result.key_frames = [];
+
+                // 使用 AnalysisResult 组件的 setResult 方法显示完整结果
                 this.analysisResult.setResult(result);
-                this.switchPage('upload');
+
+                // 关闭抽屉（如果在抽屉中）
+                this.drawer.close();
+
+                // 滚动到结果区域
+                setTimeout(() => {
+                    const resultContainer = document.getElementById('analysisResultContainer');
+                    if (resultContainer) {
+                        resultContainer.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                    }
+                }, 100);
+
+                showToast('已加载历史任务详情', 'success');
+            } else if (result && result.status === 'failed') {
+                this.analysisResult.showEmpty();
+                showToast('该任务分析失败: ' + (result.error || '未知错误'), 'error');
             } else {
                 this.analysisResult.showEmpty();
+                showToast('该任务尚未完成', 'info');
             }
         } catch (error) {
             console.error('获取任务结果失败:', error);
-            showToast('获取任务结果失败', 'error');
+            this.analysisResult.showEmpty();
+            showToast('获取任务结果失败: ' + error.message, 'error');
         }
     }
 
@@ -595,6 +672,7 @@ class App {
             const tempContainer = document.createElement('div');
             this.taskHistory = new TaskHistory(tempContainer, {
                 onTaskClick: (taskId) => {
+                    console.log('onTaskClick 被调用:', taskId);
                     this.drawer.close();
                     this.handleTaskClick(taskId);
                 },
@@ -603,6 +681,9 @@ class App {
                     // 刷新后重新打开抽屉显示更新后的列表
                     await this.taskHistory.refresh();
                     this.drawer.open('历史任务', tempContainer.innerHTML);
+                    // 重新绑定事件到 drawer 中的元素
+                    const drawerBody = this.drawer.drawer.querySelector('.drawer-body');
+                    this.taskHistory.bindTaskEvents(drawerBody);
                 },
             });
         }
@@ -611,6 +692,10 @@ class App {
         await this.taskHistory.refresh();
         const tempContainer = this.taskHistory.container;
         this.drawer.open('历史任务', tempContainer.innerHTML);
+
+        // 重要：重新绑定事件到 drawer 中的元素
+        const drawerBody = this.drawer.drawer.querySelector('.drawer-body');
+        this.taskHistory.bindTaskEvents(drawerBody);
     }
 
     handleShare(result) {

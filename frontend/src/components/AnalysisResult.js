@@ -4,6 +4,7 @@
  */
 
 import { formatTime, safeJsonParse } from '../utils/helpers.js';
+import { wechatShareManager } from '../utils/wechatShare.js';
 
 export class AnalysisResult {
     constructor(container, options = {}) {
@@ -78,17 +79,11 @@ export class AnalysisResult {
                             </svg>
                             分享
                         </button>
-                        <button id="downloadBtn" class="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 font-medium py-3 px-4 rounded-xl transition-colors flex items-center justify-center">
+                        <button id="downloadBtn" class="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-medium py-3 px-4 rounded-xl transition-colors flex items-center justify-center">
                             <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
                             </svg>
-                            下载
-                        </button>
-                        <button id="reanalyzeBtn" class="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-medium py-3 px-4 rounded-xl transition-colors flex items-center justify-center">
-                            <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
-                            </svg>
-                            再次分析
+                            下载PDF报告
                         </button>
                     </div>
                 </div>
@@ -124,18 +119,591 @@ export class AnalysisResult {
             });
         });
 
-        // 操作按钮
-        this.container.querySelector('#shareBtn')?.addEventListener('click', () => {
-            this.options.onShare(this.result);
+        // 操作按钮 - 分享
+        this.container.querySelector('#shareBtn')?.addEventListener('click', async () => {
+            await this.handleShare();
         });
 
-        this.container.querySelector('#downloadBtn')?.addEventListener('click', () => {
-            this.options.onDownload(this.result);
+        // 操作按钮 - 下载PDF
+        this.container.querySelector('#downloadBtn')?.addEventListener('click', async () => {
+            await this.handleDownloadPDF();
+        });
+    }
+
+    /**
+     * 处理PDF下载功能
+     */
+    async handleDownloadPDF() {
+        if (!this.result) return;
+
+        const taskId = this.result.task_id;
+        if (!taskId) {
+            this.showToast('任务ID不存在，无法下载报告', 'error');
+            return;
+        }
+
+        try {
+            // 显示加载提示
+            const loadingToast = this.showLoadingToast('正在生成PDF报告...');
+
+            // 构造PDF下载URL
+            const pdfUrl = `/api/results/${taskId}/pdf`;
+
+            // 下载PDF
+            const response = await fetch(pdfUrl);
+
+            loadingToast.remove();
+
+            if (!response.ok) {
+                throw new Error(`下载失败: ${response.status} ${response.statusText}`);
+            }
+
+            // 获取文件名
+            const contentDisposition = response.headers.get('Content-Disposition');
+            let filename = `乒乓分析报告_${taskId}.pdf`;
+            if (contentDisposition) {
+                const match = contentDisposition.match(/filename="(.+)"/);
+                if (match && match[1]) {
+                    filename = match[1];
+                }
+            }
+
+            // 获取PDF数据
+            const blob = await response.blob();
+
+            // 创建下载链接
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+
+            this.showToast('PDF报告下载成功');
+
+        } catch (error) {
+            console.error('下载PDF报告失败:', error);
+            this.showToast('下载PDF报告失败，请稍后重试', 'error');
+        }
+    }
+
+    /**
+     * 处理分享功能
+     * 微信环境：使用微信 JS-SDK + 引导层
+     * 普通浏览器：生成图片并分享/下载
+     */
+    async handleShare() {
+        if (!this.result) return;
+
+        // 生成分享数据
+        const shareData = this._generateShareData();
+
+        // 检查是否在微信环境
+        if (wechatShareManager.isSupported()) {
+            // 微信环境：使用微信 JS-SDK
+            const success = await wechatShareManager.share(shareData);
+            if (!success) {
+                // SDK 初始化失败，降级到图片分享
+                await this._fallbackToImageShare();
+            }
+        } else {
+            // 普通浏览器：生成图片并分享
+            await this._fallbackToImageShare();
+        }
+    }
+
+    /**
+     * 生成分享数据
+     */
+    _generateShareData() {
+        const { overall_score, summary } = this.result || {};
+        const weaknesses = summary?.weaknesses || [];
+
+        // 构建标题
+        let title = '🏓 我的AI乒乓球技术分析报告';
+        if (overall_score !== undefined) {
+            title = `⭐ ${overall_score}分 - 我的乒乓球技术分析报告`;
+        }
+
+        // 构建描述
+        let desc = 'AI教练为您生成专业的技术分析报告';
+        if (summary?.overview) {
+            desc = summary.overview.substring(0, 50);
+        }
+        if (weaknesses.length > 0) {
+            desc += `\n发现${weaknesses.length}个问题需要改进`;
+        }
+
+        // 生成分享链接
+        const link = this.generateShareUrl();
+
+        // TODO: 设置分享图片（可以是后端生成的预览图，或者使用固定图片）
+        const imgUrl = window.location.origin + '/vite.svg'; // 临时使用 vite 图标
+
+        return { title, link, imgUrl, desc };
+    }
+
+    /**
+     * 降级方案：生成图片并分享
+     */
+    async _fallbackToImageShare() {
+        const loadingToast = this.showLoadingToast('正在生成分享卡片...');
+
+        try {
+            // 生成分享图片
+            const imageBlob = await this.generateShareImage();
+
+            // 生成分享链接和文案
+            const shareUrl = this.generateShareUrl();
+            const shareText = this.generateShareText();
+
+            loadingToast.remove();
+
+            // 调试：输出分享能力
+            console.log('分享能力检查:', {
+                hasShareAPI: !!navigator.share,
+                hasCanShare: !!navigator.canShare,
+                shareUrl,
+                shareText
+            });
+
+            // 先尝试基本分享（不含文件）
+            if (navigator.share) {
+                try {
+                    console.log('尝试基本分享...');
+                    await navigator.share({
+                        title: '🏓 我的AI乒乓球技术分析报告',
+                        text: shareText,
+                        url: shareUrl
+                    });
+                    this.showToast('分享成功');
+                    return;
+                } catch (err) {
+                    console.log('基本分享结果:', err.name, err.message);
+                    if (err.name === 'AbortError') {
+                        // 用户取消分享
+                        console.log('用户取消分享');
+                        return;
+                    }
+                    // 继续尝试其他方式
+                }
+            } else {
+                console.log('浏览器不支持 navigator.share');
+            }
+
+            // 检查是否支持分享文件（移动端 Chrome 等）
+            if (navigator.share && navigator.canShare) {
+                try {
+                    const imageFile = new File([imageBlob], 'pingpong-analysis.png', { type: 'image/png' });
+                    console.log('检查文件分享能力:', navigator.canShare({ files: [imageFile] }));
+
+                    if (navigator.canShare({ files: [imageFile] })) {
+                        console.log('尝试文件分享...');
+                        await navigator.share({
+                            title: '🏓 我的AI乒乓球技术分析报告',
+                            text: shareText,
+                            url: shareUrl,
+                            files: [imageFile]
+                        });
+                        this.showToast('分享成功');
+                        return;
+                    } else {
+                        console.log('不支持分享文件');
+                    }
+                } catch (err) {
+                    console.log('文件分享失败:', err.name, err.message);
+                }
+            }
+
+            // 最后的降级方案：下载图片 + 复制链接
+            console.log('使用降级方案：下载图片 + 复制链接');
+            await this.downloadShareImage(imageBlob, shareUrl);
+
+        } catch (err) {
+            loadingToast.remove();
+            console.error('生成分享图片失败:', err);
+            // 最终降级方案：只复制链接
+            this.fallbackToCopyLink(this.generateShareUrl());
+        }
+    }
+
+    /**
+     * 生成分享链接
+     */
+    generateShareUrl() {
+        if (!this.result) return window.location.href;
+
+        // 使用当前域名 + 任务 ID 参数
+        const url = new URL(window.location.origin);
+        url.searchParams.set('task_id', this.result.task_id || '');
+        return url.toString();
+    }
+
+    /**
+     * 生成分享文案（微信朋友圈格式）
+     */
+    generateShareText() {
+        if (!this.result || !this.result.summary) {
+            return '🏓 我的AI乒乓球技术分析报告\n点击查看详情';
+        }
+
+        const { overall_score, summary, suggestions } = this.result;
+        const weaknesses = summary.weaknesses || [];
+
+        // 构建微信朋友圈分享文案
+        let text = '🏓 AI乒乓球技术分析报告\n';
+
+        // 评分
+        if (overall_score !== undefined) {
+            text += `\n⭐ 综合评分：${overall_score}分`;
+        }
+
+        // 概要（截取前60字）
+        if (summary.overview) {
+            text += `\n📝 ${summary.overview.substring(0, 60)}${summary.overview.length > 60 ? '...' : ''}`;
+        }
+
+        // 主要问题（最多2个）
+        if (weaknesses.length > 0) {
+            text += `\n\n🔸 发现问题：`;
+            weaknesses.slice(0, 2).forEach((w, i) => {
+                const title = typeof w === 'string' ? w : w.title;
+                text += `\n  ${i + 1}. ${title}`;
+            });
+        }
+
+        // 改进建议（最多2个）
+        if (suggestions && suggestions.length > 0) {
+            text += `\n\n💡 改进建议：`;
+            suggestions.slice(0, 2).forEach((s, i) => {
+                text += `\n  ${i + 1}. ${s.title}`;
+            });
+        }
+
+        text += '\n\n👇 点击链接查看完整分析报告';
+
+        return text;
+    }
+
+    /**
+     * 生成分享图片卡片
+     * 使用 Canvas 绘制精美的分享卡片
+     */
+    async generateShareImage() {
+        const canvas = document.createElement('canvas');
+        const ctx = canvas.getContext('2d');
+
+        // 图片尺寸（适合朋友圈分享）
+        const width = 1080;
+        const height = 1920;
+        canvas.width = width;
+        canvas.height = height;
+
+        const { overall_score, summary, suggestions } = this.result || {};
+        const weaknesses = summary?.weaknesses || [];
+
+        // 背景渐变
+        const gradient = ctx.createLinearGradient(0, 0, 0, height);
+        gradient.addColorStop(0, '#1e3a5f');
+        gradient.addColorStop(1, '#0f1f33');
+        ctx.fillStyle = gradient;
+        ctx.fillRect(0, 0, width, height);
+
+        // 装饰圆圈
+        ctx.fillStyle = 'rgba(47, 124, 246, 0.1)';
+        ctx.beginPath();
+        ctx.arc(width * 0.9, height * 0.15, 120, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.fillStyle = 'rgba(47, 124, 246, 0.05)';
+        ctx.beginPath();
+        ctx.arc(width * 0.1, height * 0.85, 150, 0, Math.PI * 2);
+        ctx.fill();
+
+        // 标题区域
+        ctx.fillStyle = '#ffffff';
+        ctx.font = 'bold 72px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('🏓 乒乓球技术分析', width / 2, 140);
+
+        ctx.font = '36px sans-serif';
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
+        ctx.fillText('AI 教练专业评估报告', width / 2, 200);
+
+        // 分隔线
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(100, 240);
+        ctx.lineTo(width - 100, 240);
+        ctx.stroke();
+
+        let currentY = 340;
+
+        // 综合评分
+        if (overall_score !== undefined) {
+            // 评分背景
+            ctx.fillStyle = 'rgba(47, 124, 246, 0.3)';
+            this.roundRect(ctx, 80, currentY - 80, width - 160, 180, 30);
+            ctx.fill();
+
+            ctx.fillStyle = '#ffffff';
+            ctx.font = 'bold 120px sans-serif';
+            ctx.fillText(overall_score, width / 2, currentY + 30);
+
+            ctx.font = '42px sans-serif';
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
+            ctx.fillText('综合评分', width / 2, currentY + 80);
+
+            currentY += 160;
+        }
+
+        // 总体评价
+        if (summary?.overview) {
+            const overviewText = this.truncateText(summary.overview, 50);
+            this.drawSection(ctx, '📝 总体评价', overviewText, width, currentY, '#4ade80');
+            currentY += this.getSectionHeight(ctx, '📝 总体评价', overviewText) + 60;
+        }
+
+        // 发现问题
+        if (weaknesses.length > 0) {
+            const problemText = weaknesses.slice(0, 3).map((w, i) => {
+                const title = typeof w === 'string' ? w : w.title;
+                return `${i + 1}. ${title}`;
+            }).join('\n');
+            this.drawSection(ctx, '🔸 发现问题', problemText, width, currentY, '#fbbf24');
+            currentY += this.getSectionHeight(ctx, '🔸 发现问题', problemText) + 60;
+        }
+
+        // 改进建议
+        if (suggestions && suggestions.length > 0) {
+            const suggestionText = suggestions.slice(0, 3).map((s, i) => {
+                return `${i + 1}. ${s.title}`;
+            }).join('\n');
+            this.drawSection(ctx, '💡 改进建议', suggestionText, width, currentY, '#60a5fa');
+            currentY += this.getSectionHeight(ctx, '💡 改进建议', suggestionText) + 60;
+        }
+
+        // 底部区域
+        const bottomY = height - 200;
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.1)';
+        ctx.fillRect(0, bottomY, width, 200);
+
+        // Logo/品牌
+        ctx.fillStyle = '#ffffff';
+        ctx.font = 'bold 48px sans-serif';
+        ctx.textAlign = 'left';
+        ctx.fillText('乒乓数字教练', 80, bottomY + 80);
+
+        ctx.font = '32px sans-serif';
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
+        ctx.fillText('v1.0', 80, bottomY + 140);
+
+        // 二维码提示
+        ctx.textAlign = 'right';
+        ctx.font = '32px sans-serif';
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
+        ctx.fillText('长按保存图片分享到朋友圈', width - 80, bottomY + 110);
+
+        // 转换为 Blob
+        return new Promise((resolve) => {
+            canvas.toBlob((blob) => {
+                resolve(blob);
+            }, 'image/png', 0.95);
+        });
+    }
+
+    /**
+     * 绘制圆角矩形
+     */
+    roundRect(ctx, x, y, width, height, radius) {
+        ctx.beginPath();
+        ctx.moveTo(x + radius, y);
+        ctx.lineTo(x + width - radius, y);
+        ctx.quadraticCurveTo(x + width, y, x + width, y + radius);
+        ctx.lineTo(x + width, y + height - radius);
+        ctx.quadraticCurveTo(x + width, y + height, x + width - radius, y + height);
+        ctx.lineTo(x + radius, y + height);
+        ctx.quadraticCurveTo(x, y + height, x, y + height - radius);
+        ctx.lineTo(x, y + radius);
+        ctx.quadraticCurveTo(x, y, x + radius, y);
+        ctx.closePath();
+    }
+
+    /**
+     * 绘制分享卡片的一个区块
+     */
+    drawSection(ctx, title, text, width, y, color) {
+        const padding = 80;
+        const contentWidth = width - padding * 2;
+
+        // 标题
+        ctx.fillStyle = color;
+        ctx.font = 'bold 44px sans-serif';
+        ctx.textAlign = 'left';
+        ctx.fillText(title, padding, y + 50);
+
+        // 先计算文字行数以确定背景高度
+        ctx.font = '36px sans-serif';
+        const lines = this.wrapText(ctx, text, contentWidth - 40);
+        const contentHeight = Math.max(160, 100 + lines.length * 55);
+
+        // 内容背景
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.08)';
+        this.roundRect(ctx, padding, y + 80, contentWidth, contentHeight, 20);
+        ctx.fill();
+
+        // 内容文字
+        ctx.fillStyle = '#ffffff';
+        lines.forEach((line, index) => {
+            ctx.fillText(line, padding + 20, y + 130 + index * 55);
         });
 
-        this.container.querySelector('#reanalyzeBtn')?.addEventListener('click', () => {
-            this.options.onReanalyze();
+        // 返回区块高度
+        return 80 + contentHeight + 20;
+    }
+
+    /**
+     * 计算区块高度
+     */
+    getSectionHeight(ctx, title, text) {
+        const width = 1080 - 160;
+        const lines = this.wrapText(ctx, text, width - 40);
+        return 130 + lines.length * 55 + 40;
+    }
+
+    /**
+     * 文字换行
+     */
+    wrapText(ctx, text, maxWidth) {
+        const paragraphs = text.split('\n');
+        const lines = [];
+
+        paragraphs.forEach(paragraph => {
+            const words = paragraph.split('');
+            let currentLine = '';
+
+            for (let i = 0; i < words.length; i++) {
+                const testLine = currentLine + words[i];
+                const metrics = ctx.measureText(testLine);
+                if (metrics.width > maxWidth && i > 0) {
+                    lines.push(currentLine);
+                    currentLine = words[i];
+                } else {
+                    currentLine = testLine;
+                }
+            }
+            if (currentLine) {
+                lines.push(currentLine);
+            }
         });
+
+        return lines;
+    }
+
+    /**
+     * 截断文字
+     */
+    truncateText(text, maxLength) {
+        if (text.length <= maxLength) return text;
+        return text.substring(0, maxLength) + '...';
+    }
+
+    /**
+     * 下载分享图片并复制链接
+     */
+    async downloadShareImage(imageBlob, shareUrl) {
+        // 创建下载链接
+        const url = URL.createObjectURL(imageBlob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `乒乓分析报告_${Date.now()}.png`;
+        a.click();
+        URL.revokeObjectURL(url);
+
+        // 复制分享链接
+        const fullContent = `${this.generateShareText()}\n\n${shareUrl}`;
+        try {
+            await navigator.clipboard.writeText(fullContent);
+            this.showToast('图片已保存，链接已复制到剪贴板');
+        } catch (e) {
+            // 降级方案
+            const textArea = document.createElement('textarea');
+            textArea.value = fullContent;
+            textArea.style.position = 'fixed';
+            textArea.style.opacity = '0';
+            document.body.appendChild(textArea);
+            textArea.select();
+            document.execCommand('copy');
+            document.body.removeChild(textArea);
+            this.showToast('图片已保存，链接已复制');
+        }
+    }
+
+    /**
+     * 显示加载提示
+     */
+    showLoadingToast(message) {
+        const toast = document.createElement('div');
+        toast.className = 'fixed top-4 left-1/2 transform -translate-x-1/2 px-6 py-3 rounded-xl shadow-lg z-50 bg-gray-800 text-white font-medium flex items-center';
+        toast.innerHTML = `
+            <svg class="animate-spin h-5 w-5 mr-3" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+            </svg>
+            ${message}
+        `;
+        document.body.appendChild(toast);
+        toast.remove = () => document.body.removeChild(toast);
+        return toast;
+    }
+
+    /**
+     * 备用方案：复制分享内容到剪贴板（文案+链接）
+     */
+    async fallbackToCopyLink(url) {
+        // 生成完整分享内容（文案 + 换行 + 链接）
+        const shareText = this.generateShareText();
+        const fullContent = `${shareText}\n\n${url}`;
+
+        try {
+            await navigator.clipboard.writeText(fullContent);
+            this.showToast('分享内容已复制，可粘贴到微信朋友圈');
+        } catch (err) {
+            // 如果 clipboard API 不支持，使用传统方法
+            const textArea = document.createElement('textarea');
+            textArea.value = fullContent;
+            textArea.style.position = 'fixed';
+            textArea.style.opacity = '0';
+            document.body.appendChild(textArea);
+            textArea.select();
+            try {
+                document.execCommand('copy');
+                this.showToast('分享内容已复制，可粘贴到微信朋友圈');
+            } catch (e) {
+                this.showToast('复制失败，请手动复制', 'error');
+            }
+            document.body.removeChild(textArea);
+        }
+    }
+
+    /**
+     * 显示提示消息
+     */
+    showToast(message, type = 'success') {
+        const toast = document.createElement('div');
+        toast.className = `fixed top-4 left-1/2 transform -translate-x-1/2 px-6 py-3 rounded-xl shadow-lg z-50 ${
+            type === 'success' ? 'bg-green-600' : 'bg-red-600'
+        } text-white font-medium transition-opacity duration-300`;
+        toast.textContent = message;
+        document.body.appendChild(toast);
+
+        setTimeout(() => {
+            toast.style.opacity = '0';
+            setTimeout(() => document.body.removeChild(toast), 300);
+        }, 2000);
     }
 
     switchTab(tabName) {
@@ -176,6 +744,9 @@ export class AnalysisResult {
         this.renderFrames(result);
         this.renderDetails(result);
         this.renderSuggestions(result);
+
+        // 默认切换到概览 tab
+        this.switchTab('summary');
     }
 
     renderHeader(result) {
@@ -194,7 +765,10 @@ export class AnalysisResult {
 
     renderSummary(result) {
         const container = this.container.querySelector('#summaryTab');
-        if (!container || !result.summary) return;
+        if (!container) return;
+
+        // 确保 summary 对象存在
+        const summary = result.summary || {};
 
         // 渲染目标球员选择器
         const targetPlayerHtml = this.renderTargetPlayerSelector(result.target_player);
@@ -203,23 +777,23 @@ export class AnalysisResult {
             <div class="space-y-4">
                 ${targetPlayerHtml}
 
-                ${result.summary.overview ? `
+                ${summary.overview ? `
                     <div class="bg-blue-50 rounded-xl p-4">
                         <h4 class="font-semibold text-blue-900 mb-2">总体评价</h4>
-                        <p class="text-blue-800 text-sm">${result.summary.overview}</p>
+                        <p class="text-blue-800 text-sm">${summary.overview}</p>
                     </div>
                 ` : ''}
 
-                ${result.summary.strengths && result.summary.strengths.length > 0 ? `
+                ${summary.strengths && summary.strengths.length > 0 ? `
                     <div>
                         <h4 class="font-semibold text-gray-800 mb-3 flex items-center">
                             <svg class="w-5 h-5 mr-2 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
                             </svg>
-                            优点 (${result.summary.strengths.length})
+                            优点 (${summary.strengths.length})
                         </h4>
                         <ul class="space-y-2">
-                            ${result.summary.strengths.map(s => `
+                            ${summary.strengths.map(s => `
                                 <li class="flex items-start">
                                     <span class="text-green-500 mr-2 mt-1">•</span>
                                     <span class="text-gray-700 text-sm">${s}</span>
@@ -229,16 +803,16 @@ export class AnalysisResult {
                     </div>
                 ` : ''}
 
-                ${result.summary.weaknesses && result.summary.weaknesses.length > 0 ? `
+                ${summary.weaknesses && summary.weaknesses.length > 0 ? `
                     <div>
                         <h4 class="font-semibold text-gray-800 mb-3 flex items-center">
                             <svg class="w-5 h-5 mr-2 text-orange-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
                             </svg>
-                            需要改进 (${result.summary.weaknesses.length})
+                            需要改进 (${summary.weaknesses.length})
                         </h4>
                         <ul class="space-y-2">
-                            ${result.summary.weaknesses.map(w => {
+                            ${summary.weaknesses.map(w => {
                                 const text = typeof w === 'string' ? w : (w.title || w.description || '问题');
                                 const desc = typeof w === 'object' && w.description ? `<p class="text-xs text-gray-500 mt-1">${w.description}</p>` : '';
                                 return `
@@ -249,6 +823,12 @@ export class AnalysisResult {
                                 ${desc}
                             `}).join('')}
                         </ul>
+                    </div>
+                ` : ''}
+
+                ${!summary.overview && (!summary.strengths || summary.strengths.length === 0) && (!summary.weaknesses || summary.weaknesses.length === 0) ? `
+                    <div class="text-center py-8">
+                        <p class="text-gray-400 text-sm">暂无概要信息</p>
                     </div>
                 ` : ''}
             </div>
@@ -330,11 +910,22 @@ export class AnalysisResult {
 
     renderFrames(result) {
         const container = this.container.querySelector('#framesTab');
-        if (!container || !result.key_frames) return;
+        if (!container) return;
+
+        const keyFrames = result.key_frames || [];
+
+        if (keyFrames.length === 0) {
+            container.innerHTML = `
+                <div class="text-center py-8">
+                    <p class="text-gray-400 text-sm">暂无关键帧</p>
+                </div>
+            `;
+            return;
+        }
 
         container.innerHTML = `
             <div class="grid grid-cols-2 gap-4">
-                ${result.key_frames.map((frame, index) => `
+                ${keyFrames.map((frame, index) => `
                     <div class="bg-gray-50 rounded-xl overflow-hidden">
                         <img src="${frame.url}" alt="关键帧 ${index + 1}" class="w-full aspect-video object-cover">
                         <div class="p-3">
@@ -349,11 +940,24 @@ export class AnalysisResult {
 
     renderDetails(result) {
         const container = this.container.querySelector('#detailsTab');
-        if (!container || !result.details) return;
+        if (!container) return;
+
+        const details = result.details || {};
+        const hasTechnique = details.technique && Object.keys(details.technique).length > 0;
+        const hasMetrics = details.metrics && Object.keys(details.metrics).length > 0;
+
+        if (!hasTechnique && !hasMetrics) {
+            container.innerHTML = `
+                <div class="text-center py-8">
+                    <p class="text-gray-400 text-sm">暂无详细分析</p>
+                </div>
+            `;
+            return;
+        }
 
         container.innerHTML = `
             <div class="space-y-6">
-                ${result.details.technique ? `
+                ${hasTechnique ? `
                     <div class="accordion-item">
                         <button class="accordion-btn w-full flex items-center justify-between p-4 bg-gray-50 rounded-xl hover:bg-gray-100 transition-colors">
                             <span class="font-medium text-gray-800">技术动作分析</span>
@@ -363,7 +967,7 @@ export class AnalysisResult {
                         </button>
                         <div class="accordion-content hidden mt-2 px-4">
                             <div class="pb-4 text-sm text-gray-700 space-y-2">
-                                ${Object.entries(result.details.technique).map(([key, value]) => `
+                                ${Object.entries(details.technique).map(([key, value]) => `
                                     <div class="flex justify-between">
                                         <span class="text-gray-500">${key}</span>
                                         <span class="font-medium">${value}</span>
@@ -374,7 +978,7 @@ export class AnalysisResult {
                     </div>
                 ` : ''}
 
-                ${result.details.metrics ? `
+                ${hasMetrics ? `
                     <div class="accordion-item">
                         <button class="accordion-btn w-full flex items-center justify-between p-4 bg-gray-50 rounded-xl hover:bg-gray-100 transition-colors">
                             <span class="font-medium text-gray-800">技术指标</span>
@@ -384,7 +988,7 @@ export class AnalysisResult {
                         </button>
                         <div class="accordion-content hidden mt-2 px-4">
                             <div class="pb-4 text-sm text-gray-700 space-y-2">
-                                ${Object.entries(result.details.metrics).map(([key, value]) => `
+                                ${Object.entries(details.metrics).map(([key, value]) => `
                                     <div class="flex justify-between">
                                         <span class="text-gray-500">${key}</span>
                                         <span class="font-medium">${value}</span>
@@ -403,20 +1007,31 @@ export class AnalysisResult {
 
     renderSuggestions(result) {
         const container = this.container.querySelector('#suggestionsTab');
-        if (!container || !result.suggestions) return;
+        if (!container) return;
+
+        const suggestions = result.suggestions || [];
+
+        if (suggestions.length === 0) {
+            container.innerHTML = `
+                <div class="text-center py-8">
+                    <p class="text-gray-400 text-sm">暂无改进建议</p>
+                </div>
+            `;
+            return;
+        }
 
         container.innerHTML = `
             <div class="space-y-4">
-                <h4 class="font-semibold text-gray-800 mb-3">改进建议 (${result.suggestions.length})</h4>
-                ${result.suggestions.map((suggestion, index) => `
+                <h4 class="font-semibold text-gray-800 mb-3">改进建议 (${suggestions.length})</h4>
+                ${suggestions.map((suggestion, index) => `
                     <div class="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-xl p-4">
                         <div class="flex items-start">
                             <div class="w-8 h-8 bg-blue-600 text-white rounded-lg flex items-center justify-center font-bold mr-3 flex-shrink-0">
                                 ${index + 1}
                             </div>
                             <div>
-                                <h4 class="font-semibold text-gray-800 mb-1">${suggestion.title}</h4>
-                                <p class="text-sm text-gray-600">${suggestion.description}</p>
+                                <h4 class="font-semibold text-gray-800 mb-1">${suggestion.title || `改进建议 ${index + 1}`}</h4>
+                                <p class="text-sm text-gray-600">${suggestion.description || ''}</p>
                                 ${suggestion.priority ? `
                                     <span class="inline-block mt-2 px-2 py-1 text-xs font-medium rounded-full ${
                                         suggestion.priority === 'high' ? 'bg-red-100 text-red-700' :

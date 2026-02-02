@@ -13,6 +13,7 @@ dependencies = [
     "matplotlib>=3.7.0",
     "pdfplumber>=0.11.9",
     "python-dotenv>=1.2.1",
+    "reportlab>=4.4.9",
     "streamlit>=1.53.1",
     "streamlit-autorefresh>=1.0.1",
     "zai-sdk>=0.2.1",

@@ -22,7 +22,7 @@ from fastapi import (
     Depends,
 )
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 from contextlib import asynccontextmanager
 
@@ -30,6 +30,8 @@ from contextlib import asynccontextmanager
 from .steps import extract_frames, compute_features, run_full_analysis
 from .agent import get_mock_report
 from .player_detector import detect_target_player
+from .wechat import wechat_jsdk
+from .pdf import generate_pdf_report
 from .constants import (
     AGENT_MODE_MOCK,
     AGENT_MODE_REAL,
@@ -132,6 +134,7 @@ class AnalysisResult(BaseModel):
     details: Optional[dict] = None
     suggestions: Optional[List[dict]] = None
     overall_score: Optional[int] = None
+    target_player: Optional[dict] = None  # 目标球员配置
 
 
 # ============ 任务管理器 ============
@@ -380,6 +383,7 @@ async def simulate_analysis(task_id: str):
         # 构建最终结果
         result = {
             "task_id": task_id,
+            "name": task.get("name", f"训练视频_{task_id}"),  # 添加任务名称
             "status": "completed",
             "created_at": task["created_at"],
             "target_player": target_player_config,  # 添加目标球员信息
@@ -583,10 +587,16 @@ async def upload_video(
         # 如果无法验证时长，记录警告但继续处理（降级处理）
         logger.warning(f"无法验证视频时长，继续处理: {e}")
 
+    # 生成友好的任务名称
+    from datetime import datetime
+    date_str = datetime.now().strftime("%Y%m%d")
+    random_str = uuid.uuid4().hex[:6]
+    task_name = f"训练视频_{date_str}_{random_str}"
+
     # 创建任务
     task_manager.create_task_with_id(
         task_id,
-        file.filename or "未命名任务",
+        task_name,
         str(video_path)
     )
     task_manager.add_to_queue(task_id)
@@ -686,17 +696,61 @@ async def get_analysis_result(task_id: str):
 
     - 返回完整的分析结果数据
     - 包含概览、关键帧、详细分析、建议等
+    - 优先从内存获取，服务重启后从文件恢复
     """
     task = task_manager.get_task(task_id)
+
+    # 如果任务不在内存中，尝试从文件恢复
     if not task:
-        raise HTTPException(status_code=404, detail="任务不存在")
+        task_dir = RUNS_DIR / task_id
+        if not task_dir.exists():
+            raise HTTPException(status_code=404, detail="任务不存在")
+
+        # 尝试从 report.json 读取结果
+        report_path = task_dir / "report.json"
+        if report_path.exists():
+            import json
+            with open(report_path, "r", encoding="utf-8") as f:
+                result = json.load(f)
+
+            # 将结果重新加载到内存
+            task_manager.tasks[task_id] = {
+                "task_id": task_id,
+                "name": result.get("name", f"训练视频_{task_id}"),
+                "status": "completed",
+                "progress": 100,
+                "stage": None,
+                "video_path": str(task_dir / "input.mp4"),
+                "created_at": result.get("created_at", datetime.now().isoformat()),
+                "updated_at": result.get("created_at", datetime.now().isoformat()),
+                "error": None,
+                "result": result,
+            }
+            task = task_manager.tasks[task_id]
+        else:
+            raise HTTPException(status_code=404, detail="任务不存在")
 
     result = task.get("result")
+
+    # 如果内存中没有 result，尝试从文件读取
+    if not result:
+        task_dir = RUNS_DIR / task_id
+        report_path = task_dir / "report.json"
+        if report_path.exists():
+            import json
+            try:
+                with open(report_path, "r", encoding="utf-8") as f:
+                    result = json.load(f)
+                # 更新内存中的任务
+                task_manager.update_task(task_id, result=result)
+            except Exception as e:
+                logger.error(f"读取报告文件失败: {e}")
+
     if not result:
         return AnalysisResult(
             task_id=task_id,
             status=task["status"],
-            created_at=task["created_at"],
+            created_at=task.get("created_at", datetime.now().isoformat()),
         )
 
     return AnalysisResult(**result)
@@ -713,9 +767,65 @@ async def get_history_tasks(
 
     - 支持分页
     - 支持按状态筛选
+    - 服务重启后从文件系统恢复任务列表
     """
-    data = task_manager.get_history_tasks(page, limit, status)
-    return TaskListResponse(**data)
+    # 首先尝试从内存获取
+    tasks_list = list(task_manager.tasks.values())
+
+    # 如果内存中没有任务（服务刚重启），从文件系统恢复
+    if not tasks_list:
+        import json
+        for task_dir in sorted(RUNS_DIR.iterdir(), reverse=True):
+            if not task_dir.is_dir():
+                continue
+
+            task_id = task_dir.name
+            report_path = task_dir / "report.json"
+
+            if report_path.exists():
+                try:
+                    with open(report_path, "r", encoding="utf-8") as f:
+                        result = json.load(f)
+
+                    # 重建任务信息
+                    task_manager.tasks[task_id] = {
+                        "task_id": task_id,
+                        "name": result.get("name", f"训练视频_{task_id}"),
+                        "status": "completed",
+                        "progress": 100,
+                        "stage": None,
+                        "video_path": str(task_dir / "input.mp4"),
+                        "created_at": result.get("created_at", datetime.now().isoformat()),
+                        "updated_at": result.get("created_at", datetime.now().isoformat()),
+                        "error": None,
+                        "result": result,
+                    }
+                except Exception as e:
+                    logger.error(f"恢复任务 {task_id} 失败: {e}")
+
+        # 重新获取任务列表
+        tasks_list = list(task_manager.tasks.values())
+
+    # 过滤状态
+    if status:
+        tasks_list = [t for t in tasks_list if t["status"] == status]
+
+    # 排序（最新在前）
+    tasks_list.sort(key=lambda x: x["created_at"], reverse=True)
+
+    # 分页
+    total = len(tasks_list)
+    start = (page - 1) * limit
+    end = start + limit
+    tasks = tasks_list[start:end]
+
+    return {
+        "tasks": tasks,
+        "total": total,
+        "page": page,
+        "limit": limit,
+        "has_more": end < total,
+    }
 
 
 @app.get("/api/queue")
@@ -782,6 +892,89 @@ async def get_frame_image(task_id: str, frame_name: str):
         raise HTTPException(status_code=404, detail="关键帧图片不存在")
 
     return FileResponse(frame_path)
+
+
+@app.get("/api/wechat/jssdk-config")
+async def get_wechat_jsdk_config(url: str):
+    """
+    获取微信 JS-SDK 配置
+
+    - 返回用于 wx.config 的签名参数
+    - url 参数：当前页面的完整 URL（不含 #hash 部分）
+    - 返回：appId, timestamp, nonceStr, signature
+    """
+    try:
+        config = await wechat_jsdk.get_jsdk_config(url)
+        return {
+            "success": True,
+            "data": config,
+        }
+    except Exception as e:
+        logger.error(f"获取微信 JS-SDK 配置失败: {e}")
+        raise HTTPException(status_code=500, detail=f"获取配置失败: {str(e)}")
+
+
+@app.get("/api/results/{task_id}/pdf")
+async def download_pdf_report(task_id: str):
+    """
+    下载 PDF 分析报告
+
+    - 返回任务的分析结果 PDF 文件
+    - PDF 包含概览、评分、建议等内容
+    """
+    task = task_manager.get_task(task_id)
+
+    # 如果任务不在内存中，尝试从文件恢复
+    if not task:
+        task_dir = RUNS_DIR / task_id
+        if not task_dir.exists():
+            raise HTTPException(status_code=404, detail="任务不存在")
+
+        report_path = task_dir / "report.json"
+        if report_path.exists():
+            import json
+            with open(report_path, "r", encoding="utf-8") as f:
+                result = json.load(f)
+            task = {"result": result}
+        else:
+            raise HTTPException(status_code=404, detail="任务不存在")
+
+    result = task.get("result")
+
+    # 如果内存中没有 result，尝试从文件读取
+    if not result:
+        task_dir = RUNS_DIR / task_id
+        report_path = task_dir / "report.json"
+        if report_path.exists():
+            import json
+            try:
+                with open(report_path, "r", encoding="utf-8") as f:
+                    result = json.load(f)
+            except Exception as e:
+                logger.error(f"读取报告文件失败: {e}")
+                raise HTTPException(status_code=500, detail="读取报告失败")
+
+    if not result:
+        raise HTTPException(status_code=404, detail="分析结果不存在")
+
+    try:
+        # 生成 PDF
+        pdf_data = generate_pdf_report(result, RUNS_DIR)
+
+        # 生成文件名
+        filename = f"乒乓分析报告_{task_id}.pdf"
+
+        # 返回 PDF 文件
+        return StreamingResponse(
+            iter([pdf_data]),
+            media_type="application/pdf",
+            headers={
+                "Content-Disposition": f'attachment; filename="{filename}"',
+            },
+        )
+    except Exception as e:
+        logger.error(f"生成 PDF 失败: {e}")
+        raise HTTPException(status_code=500, detail=f"生成 PDF 失败: {str(e)}")
 
 
 @app.websocket("/ws/tasks/{task_id}")

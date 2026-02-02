@@ -20,7 +20,7 @@ export class TaskHistory {
         this.tasks = [];
         this.page = 1;
         this.hasMore = true;
-        this.currentFilter = 'all';
+        this.currentFilter = 'completed';  // 只显示已完成的任务
         this.init();
     }
 
@@ -36,46 +36,6 @@ export class TaskHistory {
                 <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px;">
                     <h3 style="font-size: 16px; font-weight: 600; color: var(--text-primary);">历史任务</h3>
                     <span id="taskCount" style="font-size: 13px; color: var(--text-secondary);"></span>
-                </div>
-
-                <!-- 筛选器 -->
-                <div style="display: flex; gap: 8px; margin-bottom: 16px; overflow-x: auto; padding-bottom: 4px;">
-                    <button class="filter-btn active" data-filter="all" style="
-                        padding: 8px 16px;
-                        border-radius: 10px;
-                        font-size: 13px;
-                        font-weight: 500;
-                        background: var(--primary);
-                        color: white;
-                        border: none;
-                        cursor: pointer;
-                        white-space: nowrap;
-                        transition: all 0.15s ease;
-                    ">全部</button>
-                    <button class="filter-btn" data-filter="completed" style="
-                        padding: 8px 16px;
-                        border-radius: 10px;
-                        font-size: 13px;
-                        font-weight: 500;
-                        background: var(--bg-elevated);
-                        color: var(--text-secondary);
-                        border: 1px solid var(--divider);
-                        cursor: pointer;
-                        white-space: nowrap;
-                        transition: all 0.15s ease;
-                    ">已完成</button>
-                    <button class="filter-btn" data-filter="failed" style="
-                        padding: 8px 16px;
-                        border-radius: 10px;
-                        font-size: 13px;
-                        font-weight: 500;
-                        background: var(--bg-elevated);
-                        color: var(--text-secondary);
-                        border: 1px solid var(--divider);
-                        cursor: pointer;
-                        white-space: nowrap;
-                        transition: all 0.15s ease;
-                    ">失败</button>
                 </div>
 
                 <!-- 任务列表 -->
@@ -103,32 +63,13 @@ export class TaskHistory {
                     <svg width="48" height="48" fill="none" style="color: var(--text-muted); margin: 0 auto 12px;" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
                     </svg>
-                    <p style="font-size: 14px; color: var(--text-tertiary);">暂无历史任务</p>
+                    <p style="font-size: 14px; color: var(--text-tertiary);">暂无已完成的分析</p>
                 </div>
             </div>
         `;
     }
 
     bindEvents() {
-        // 筛选器
-        this.container.querySelectorAll('.filter-btn').forEach(btn => {
-            btn.addEventListener('click', () => {
-                const filter = btn.dataset.filter;
-                this.setFilter(filter);
-            });
-            // 添加悬停效果
-            btn.addEventListener('mouseenter', () => {
-                if (!btn.classList.contains('active')) {
-                    btn.style.background = 'var(--bg-card)';
-                }
-            });
-            btn.addEventListener('mouseleave', () => {
-                if (!btn.classList.contains('active')) {
-                    btn.style.background = 'var(--bg-elevated)';
-                }
-            });
-        });
-
         // 加载更多
         this.container.querySelector('#loadMore button')?.addEventListener('click', () => {
             this.loadMore();
@@ -136,21 +77,7 @@ export class TaskHistory {
     }
 
     setFilter(filter) {
-        // 更新按钮状态 - 深色主题
-        this.container.querySelectorAll('.filter-btn').forEach(btn => {
-            if (btn.dataset.filter === filter) {
-                btn.classList.add('active');
-                btn.style.background = 'var(--primary)';
-                btn.style.color = 'white';
-                btn.style.border = 'none';
-            } else {
-                btn.classList.remove('active');
-                btn.style.background = 'var(--bg-elevated)';
-                btn.style.color = 'var(--text-secondary)';
-                btn.style.border = '1px solid var(--divider)';
-            }
-        });
-
+        // 内部使用：设置筛选状态（只支持 completed）
         this.currentFilter = filter;
         this.page = 1;
         this.refresh();
@@ -209,16 +136,37 @@ export class TaskHistory {
         }
 
         // 绑定任务点击和删除事件
-        historyList.querySelectorAll('.task-item').forEach(item => {
-            // 点击任务
-            item.addEventListener('click', (e) => {
+        this.bindTaskEvents(historyList);
+    }
+
+    /**
+     * 在指定父元素上绑定任务项事件
+     * 用于 drawer 内容更新后重新绑定事件
+     */
+    bindTaskEvents(parentElement) {
+        if (!parentElement) return;
+
+        parentElement.querySelectorAll('.task-item').forEach(item => {
+            // 移除旧的事件监听器（如果有）
+            item.cloneNode(true);
+
+            // 点击任务 - 同时支持 click 和 touchend 事件（移动端）
+            const handleTaskClick = (e) => {
+                // 阻止默认行为防止双重触发
+                if (e.type === 'touchend') {
+                    e.preventDefault();
+                }
                 if (!e.target.closest('.delete-btn')) {
                     const taskId = item.dataset.taskId;
+                    console.log('任务项被点击:', taskId);
                     this.options.onTaskClick(taskId);
                 }
-            });
+            };
 
-            // 悬停效果
+            item.addEventListener('click', handleTaskClick);
+            item.addEventListener('touchend', handleTaskClick, { passive: false });
+
+            // 悬停效果（仅桌面端）
             item.addEventListener('mouseenter', () => {
                 item.style.background = 'var(--bg-elevated)';
                 item.style.borderColor = 'var(--primary)';
@@ -231,11 +179,16 @@ export class TaskHistory {
             // 删除按钮
             const deleteBtn = item.querySelector('.delete-btn');
             if (deleteBtn) {
-                deleteBtn.addEventListener('click', (e) => {
+                const handleDeleteClick = (e) => {
                     e.stopPropagation();
+                    e.preventDefault();
                     const taskId = item.dataset.taskId;
                     this.handleDelete(taskId);
-                });
+                };
+
+                deleteBtn.addEventListener('click', handleDeleteClick);
+                deleteBtn.addEventListener('touchend', handleDeleteClick, { passive: false });
+
                 deleteBtn.addEventListener('mouseenter', () => {
                     deleteBtn.style.background = 'var(--error-bg)';
                     deleteBtn.querySelector('svg').style.color = 'var(--error)';
@@ -246,6 +199,12 @@ export class TaskHistory {
                 });
             }
         });
+
+        // 绑定加载更多按钮
+        const loadMoreBtn = parentElement.querySelector('#loadMore button');
+        if (loadMoreBtn) {
+            loadMoreBtn.addEventListener('click', () => this.loadMore());
+        }
     }
 
     renderTaskItem(task) {
@@ -298,15 +257,7 @@ export class TaskHistory {
                             <p style="font-size: 12px; color: var(--text-tertiary); margin-top: 4px;">时长: ${task.duration}</p>
                         ` : ''}
                     </div>
-                    <div style="display: flex; align-items: center; gap: 8px; margin-left: 8px;">
-                        <span style="
-                            padding: 4px 10px;
-                            border-radius: 8px;
-                            font-size: 12px;
-                            font-weight: 500;
-                            background: ${statusColor}20;
-                            color: ${statusColor};
-                        ">${statusText}</span>
+                    <div style="display: flex; align-items: center; margin-left: 8px;">
                         <button class="delete-btn" style="
                             padding: 6px;
                             background: transparent;

@@ -14,7 +14,10 @@ Environment="NODE_ENV=production"
 Environment="PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/bin"
 EnvironmentFile=-/opt/coachagent/frontend/.env
 
-# ✅ 生产：只运行预览服务（dist 必须已存在）
+# 启动前先构建（使用 .env 中的 VITE_API_URL）
+ExecStartPre=/bin/sh -c 'VITE_API_URL=$([ -f .env ] && grep "^VITE_API_URL=" .env | cut -d= -f2-) npm run build'
+
+# 运行预览服务
 ExecStart=/usr/bin/npm run preview -- --host 0.0.0.0 --port 8501
 
 Restart=always
