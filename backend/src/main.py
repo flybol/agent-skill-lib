@@ -105,7 +105,9 @@ class AnalysisRequest(BaseModel):
     """分析请求"""
 
     task_id: str
-    target_player: Optional[str] = None  # 用户选择的球员方向: 'left' | 'right' | 'single_player'
+    target_player: Optional[str] = (
+        None  # 用户选择的球员方向: 'left' | 'right' | 'single_player'
+    )
 
 
 class AnalysisResponse(BaseModel):
@@ -433,7 +435,9 @@ async def simulate_analysis(task_id: str):
             "key_frames": [
                 {
                     "frame_number": f["frame_index"],
-                    "url": task_manager._build_full_url(f"/api/frames/{task_id}/{Path(f['path']).name}"),
+                    "url": task_manager._build_full_url(
+                        f"/api/frames/{task_id}/{Path(f['path']).name}"
+                    ),
                     "description": f"时间戳: {f['timestamp']}s",
                 }
                 for f in frames_data.get("frames", [])[:10]  # 最多显示10帧
@@ -529,7 +533,9 @@ async def auto_detect_base_url(request: Request, call_next):
     if not task_manager.base_url:
         # 获取请求的协议和主机
         scheme = request.headers.get("X-Forwarded-Proto", request.url.scheme)
-        host = request.headers.get("X-Forwarded-Host", request.headers.get("Host", "localhost:8000"))
+        host = request.headers.get(
+            "X-Forwarded-Host", request.headers.get("Host", "localhost:8000")
+        )
         # 构建并设置 base_url
         inferred_base_url = f"{scheme}://{host}"
         task_manager.set_base_url(inferred_base_url)
@@ -569,7 +575,9 @@ def build_full_url(request: Request, path: str) -> str:
 
     # 获取请求的 host
     # 优先检查 X-Forwarded-Host 头（反向代理场景）
-    host = request.headers.get("X-Forwarded-Host", request.headers.get("Host", request.url.netloc))
+    host = request.headers.get(
+        "X-Forwarded-Host", request.headers.get("Host", request.url.netloc)
+    )
 
     # 构建完整 URL
     return f"{scheme}://{host}{path}"
@@ -756,7 +764,9 @@ async def start_analysis(request: AnalysisRequest):
         )
 
     # 更新任务状态为处理中
-    task_manager.update_task(request.task_id, status="processing", stage="analyzing", progress=30)
+    task_manager.update_task(
+        request.task_id, status="processing", stage="analyzing", progress=30
+    )
 
     video_path = Path(task.get("video_path", ""))
     if not video_path.exists():
@@ -781,7 +791,12 @@ async def start_analysis(request: AnalysisRequest):
             }
 
         # Step 1: 完整抽帧（比预处理的10帧更多）
-        from .steps import extract_frames, compute_features, run_llm_analysis, assemble_report
+        from .steps import (
+            extract_frames,
+            compute_features,
+            run_llm_analysis,
+            assemble_report,
+        )
 
         frames_data = extract_frames(
             video_path,
@@ -792,12 +807,16 @@ async def start_analysis(request: AnalysisRequest):
             strategy="per_segment",
         )
 
-        task_manager.update_task(request.task_id, progress=50, stage="computing_features")
+        task_manager.update_task(
+            request.task_id, progress=50, stage="computing_features"
+        )
 
         # Step 2: 计算特征
         features_data = compute_features(frames_data, num_segments=8)
 
-        task_manager.update_task(request.task_id, progress=60, stage="running_llm_analysis")
+        task_manager.update_task(
+            request.task_id, progress=60, stage="running_llm_analysis"
+        )
 
         # Step 3: 运行 LLM 分析（使用用户选择的球员配置）
         llm_result = run_llm_analysis(
@@ -808,13 +827,18 @@ async def start_analysis(request: AnalysisRequest):
             target_player_config=target_player_config,  # 传递用户选择
         )
 
-        task_manager.update_task(request.task_id, progress=90, stage="assembling_report")
+        task_manager.update_task(
+            request.task_id, progress=90, stage="assembling_report"
+        )
 
         # Step 4: 组装报告
-        report = assemble_report(frames_data, features_data, llm_result, target_player_config)
+        report = assemble_report(
+            frames_data, features_data, llm_result, target_player_config
+        )
 
         # 保存报告到文件
         import json
+
         report_path = run_dir / "report.json"
         with open(report_path, "w", encoding="utf-8") as f:
             json.dump(report, f, ensure_ascii=False, indent=2)
@@ -832,7 +856,9 @@ async def start_analysis(request: AnalysisRequest):
                 "weaknesses": [
                     {
                         "title": w.get("title", "") if isinstance(w, dict) else w,
-                        "description": w.get("description", "") if isinstance(w, dict) else "",
+                        "description": w.get("description", "")
+                        if isinstance(w, dict)
+                        else "",
                     }
                     for w in llm_result.get("weaknesses", [])
                 ],
@@ -851,7 +877,9 @@ async def start_analysis(request: AnalysisRequest):
         }
 
         # 更新任务为完成状态
-        task_manager.update_task(request.task_id, status="completed", progress=100, stage=None, result=result)
+        task_manager.update_task(
+            request.task_id, status="completed", progress=100, stage=None, result=result
+        )
 
         return AnalysisResponse(
             success=True,
@@ -1076,7 +1104,7 @@ async def delete_task(task_id: str):
     return {"success": True, "message": "任务已删除"}
 
 
-@app.get("/api/frames/{task_id}/{frame_name}")
+@app.get("/frames/{task_id}/{frame_name}")
 async def get_frame_image(task_id: str, frame_name: str):
     """
     获取关键帧图片
@@ -1086,8 +1114,23 @@ async def get_frame_image(task_id: str, frame_name: str):
     from fastapi.responses import FileResponse
 
     frame_path = RUNS_DIR / task_id / "frames" / frame_name
+
     if not frame_path.exists():
-        raise HTTPException(status_code=404, detail="关键帧图片不存在")
+        # 提供详细的调试信息
+        frames_dir = RUNS_DIR / task_id / "frames"
+        available_frames = []
+        if frames_dir.exists():
+            available_frames = sorted(
+                [f.name for f in frames_dir.iterdir() if f.is_file()]
+            )
+
+        error_detail = f"关键帧图片不存在: {frame_name}"
+        if available_frames:
+            error_detail += f"\n可用的帧文件: {', '.join(available_frames[:10])}"
+        else:
+            error_detail += f"\n帧目录不存在或为空: {frames_dir}"
+
+        raise HTTPException(status_code=404, detail=error_detail)
 
     return FileResponse(frame_path)
 
@@ -1182,7 +1225,7 @@ async def download_pdf_report(task_id: str):
         raise HTTPException(status_code=500, detail=f"生成 PDF 失败: {str(e)}")
 
 
-@app.get("/api/videos/{task_id}")
+@app.get("/videos/{task_id}")
 async def get_task_video(task_id: str):
     """
     获取任务的原始视频
@@ -1230,7 +1273,7 @@ async def get_task_video(task_id: str):
         iter_file(),
         media_type=media_type,
         headers={
-            "Content-Disposition": f"inline; filename=\"{video_path.name}\"",
+            "Content-Disposition": f'inline; filename="{video_path.name}"',
             "Accept-Ranges": "bytes",
         },
     )
@@ -1256,7 +1299,9 @@ async def websocket_task_updates(websocket: WebSocket, task_id: str):
 
     # 获取请求信息用于构建完整 URL
     # WebSocket 可能没有 scheme，从 Host 推断或使用配置
-    host = websocket.headers.get("X-Forwarded-Host", websocket.headers.get("Host", "localhost:8000"))
+    host = websocket.headers.get(
+        "X-Forwarded-Host", websocket.headers.get("Host", "localhost:8000")
+    )
 
     # 优先使用环境变量配置的 BASE_URL
     base_url = os.getenv("BASE_URL", "")
