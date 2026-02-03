@@ -121,16 +121,43 @@ export function downloadFile(url, filename) {
 }
 
 /**
- * 复制到剪贴板
+ * 复制到剪贴板（支持多种浏览器的降级方案）
  */
 export async function copyToClipboard(text) {
-    try {
-        await navigator.clipboard.writeText(text);
-        return true;
-    } catch (error) {
-        console.error('复制失败:', error);
-        return false;
+    // 方法1：使用 Clipboard API（需要 HTTPS 或 localhost）
+    if (navigator.clipboard && window.isSecureContext) {
+        try {
+            await navigator.clipboard.writeText(text);
+            return true;
+        } catch (err) {
+            console.log('Clipboard API 失败，尝试降级方案:', err);
+        }
     }
+
+    // 方法2：使用传统的 execCommand（兼容性更好）
+    try {
+        const textArea = document.createElement('textarea');
+        textArea.value = text;
+        textArea.style.position = 'fixed';
+        textArea.style.left = '-999999px';
+        textArea.style.top = '-999999px';
+        document.body.appendChild(textArea);
+        textArea.focus();
+        textArea.select();
+
+        const successful = document.execCommand('copy');
+        document.body.removeChild(textArea);
+
+        if (successful) {
+            return true;
+        }
+    } catch (err) {
+        console.error('execCommand 复制失败:', err);
+    }
+
+    // 所有方法都失败
+    console.error('复制失败：所有方法均不可用');
+    return false;
 }
 
 /**

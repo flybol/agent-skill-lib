@@ -239,40 +239,41 @@ export class AnalysisResult {
         // 生成分享链接
         const link = this.generateShareUrl();
 
-        // TODO: 设置分享图片（可以是后端生成的预览图，或者使用固定图片）
-        const imgUrl = window.location.origin + '/vite.svg'; // 临时使用 vite 图标
+        // 分享图片：使用 emoji 构成的卡片式预览图
+        // 注意：实际部署时建议替换为真实的专业分享图片（500x400 px）
+        // 图片需要支持 HTTPS 访问
+        const imgUrl = window.location.origin + '/share-cover.jpg'; // TODO: 替换为实际的分享封面图
 
         return { title, link, imgUrl, desc };
     }
 
     /**
-     * 降级方案：生成图片并分享
+     * 降级方案：直接复制分享内容
      */
     async _fallbackToImageShare() {
-        const loadingToast = this.showLoadingToast('正在生成分享卡片...');
+        // 生成分享链接和文案
+        const shareUrl = this.generateShareUrl();
+        const shareText = this.generateShareText();
+        const fullContent = `${shareText}\n\n${shareUrl}`;
+
+        // 检查是否是微信环境
+        const isWeChat = /micromessenger/i.test(navigator.userAgent);
+
+        if (isWeChat) {
+            // 微信环境：直接显示手动复制界面（因为剪贴板 API 不可靠）
+            this.showCopyFallback(fullContent);
+            return;
+        }
+
+        // 非微信环境：尝试系统分享或复制
+        const loadingToast = this.showLoadingToast('正在准备分享...');
 
         try {
-            // 生成分享图片
-            const imageBlob = await this.generateShareImage();
-
-            // 生成分享链接和文案
-            const shareUrl = this.generateShareUrl();
-            const shareText = this.generateShareText();
-
             loadingToast.remove();
 
-            // 调试：输出分享能力
-            console.log('分享能力检查:', {
-                hasShareAPI: !!navigator.share,
-                hasCanShare: !!navigator.canShare,
-                shareUrl,
-                shareText
-            });
-
-            // 先尝试基本分享（不含文件）
+            // 尝试使用系统分享 API
             if (navigator.share) {
                 try {
-                    console.log('尝试基本分享...');
                     await navigator.share({
                         title: '🏓 我的AI乒乓球技术分析报告',
                         text: shareText,
@@ -281,52 +282,149 @@ export class AnalysisResult {
                     this.showToast('分享成功');
                     return;
                 } catch (err) {
-                    console.log('基本分享结果:', err.name, err.message);
                     if (err.name === 'AbortError') {
-                        // 用户取消分享
-                        console.log('用户取消分享');
-                        return;
+                        return; // 用户取消
                     }
-                    // 继续尝试其他方式
+                    // 继续尝试复制方案
                 }
+            }
+
+            // 复制分享内容到剪贴板
+            const copied = await this.copyToClipboard(fullContent);
+            if (copied) {
+                // 复制成功，显示确认界面（让用户知道已复制）
+                this.showCopySuccessFallback(shareUrl, shareText);
             } else {
-                console.log('浏览器不支持 navigator.share');
+                // 复制失败，显示手动复制界面
+                this.showCopyFallback(fullContent);
             }
-
-            // 检查是否支持分享文件（移动端 Chrome 等）
-            if (navigator.share && navigator.canShare) {
-                try {
-                    const imageFile = new File([imageBlob], 'pingpong-analysis.png', { type: 'image/png' });
-                    console.log('检查文件分享能力:', navigator.canShare({ files: [imageFile] }));
-
-                    if (navigator.canShare({ files: [imageFile] })) {
-                        console.log('尝试文件分享...');
-                        await navigator.share({
-                            title: '🏓 我的AI乒乓球技术分析报告',
-                            text: shareText,
-                            url: shareUrl,
-                            files: [imageFile]
-                        });
-                        this.showToast('分享成功');
-                        return;
-                    } else {
-                        console.log('不支持分享文件');
-                    }
-                } catch (err) {
-                    console.log('文件分享失败:', err.name, err.message);
-                }
-            }
-
-            // 最后的降级方案：下载图片 + 复制链接
-            console.log('使用降级方案：下载图片 + 复制链接');
-            await this.downloadShareImage(imageBlob, shareUrl);
 
         } catch (err) {
             loadingToast.remove();
-            console.error('生成分享图片失败:', err);
-            // 最终降级方案：只复制链接
-            this.fallbackToCopyLink(this.generateShareUrl());
+            console.error('分享失败:', err);
+            // 最后的降级方案
+            this.showCopyFallback(fullContent);
         }
+    }
+
+    /**
+     * 复制文本到剪贴板（带兼容处理）
+     * 失败时返回 false，让调用方处理降级方案
+     */
+    async copyToClipboard(text) {
+        // 方法1：使用 Clipboard API
+        if (navigator.clipboard && window.isSecureContext) {
+            try {
+                await navigator.clipboard.writeText(text);
+                this.showToast('分享内容已复制，可粘贴发送');
+                return true;
+            } catch (err) {
+                console.log('Clipboard API 失败，尝试降级方案:', err);
+            }
+        }
+
+        // 方法2：使用传统 execCommand
+        const textArea = document.createElement('textarea');
+        textArea.value = text;
+        textArea.style.position = 'fixed';
+        textArea.style.top = '0';
+        textArea.style.left = '0';
+        textArea.style.width = '2em';
+        textArea.style.height = '2em';
+        textArea.style.padding = '0';
+        textArea.style.border = 'none';
+        textArea.style.outline = 'none';
+        textArea.style.boxShadow = 'none';
+        textArea.style.background = 'transparent';
+        textArea.readOnly = true; // 防止 iOS 弹出键盘
+        document.body.appendChild(textArea);
+
+        // iOS 兼容：先聚焦再选中
+        if (navigator.userAgent.match(/ipad|iphone/i)) {
+            const range = document.createRange();
+            range.selectNodeContents(textArea);
+            const selection = window.getSelection();
+            selection.removeAllRanges();
+            selection.addRange(range);
+            textArea.setSelectionRange(0, text.length);
+        } else {
+            textArea.select();
+        }
+
+        try {
+            const successful = document.execCommand('copy');
+            document.body.removeChild(textArea);
+            if (successful) {
+                this.showToast('分享内容已复制，可粘贴发送');
+                return true;
+            }
+        } catch (err) {
+            document.body.removeChild(textArea);
+            console.error('复制失败:', err);
+        }
+
+        // 所有方法都失败，返回 false
+        return false;
+    }
+
+    /**
+     * 显示复制失败的降级界面
+     */
+    showCopyFallback(text) {
+        const modal = document.createElement('div');
+        modal.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.7);display:flex;align-items:center;justify-content:center;z-index:9999;';
+        modal.innerHTML = `
+            <div style="background:white;border-radius:16px;padding:24px;margin:20px;max-width:400px;">
+                <h3 style="font-size:18px;font-weight:600;color:#1f2937;margin-bottom:12px;">请手动复制</h3>
+                <p style="font-size:14px;color:#6b7280;margin-bottom:16px;">长按下方内容复制分享链接：</p>
+                <textarea readonly style="width:100%;height:120px;border:1px solid #e5e7eb;border-radius:8px;padding:12px;font-size:13px;color:#374151;background:#f9fafb;resize:none;">${text}</textarea>
+                <button id="closeModal" style="width:100%;margin-top:16px;padding:12px;background:#2563eb;color:white;border:none;border-radius:8px;font-size:15px;font-weight:500;cursor:pointer;">关闭</button>
+            </div>
+        `;
+        document.body.appendChild(modal);
+        modal.querySelector('#closeModal').addEventListener('click', () => {
+            document.body.removeChild(modal);
+        });
+        modal.addEventListener('click', (e) => {
+            if (e.target === modal) {
+                document.body.removeChild(modal);
+            }
+        });
+    }
+
+    /**
+     * 显示复制成功的确认界面
+     */
+    showCopySuccessFallback(shareUrl, shareText) {
+        const modal = document.createElement('div');
+        modal.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;z-index:9999;';
+        modal.innerHTML = `
+            <div style="background:white;border-radius:16px;padding:32px 24px;margin:20px;max-width:360px;text-align:center;">
+                <div style="width:64px;height:64px;background:#10b981;border-radius:50%;display:flex;align-items:center;justify-content:center;margin:0 auto 16px;">
+                    <svg width="32" height="32" fill="none" stroke="white" viewBox="0 0 24 24" style="stroke-width:3;">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/>
+                    </svg>
+                </div>
+                <h3 style="font-size:20px;font-weight:600;color:#1f2937;margin-bottom:8px;">链接已复制！</h3>
+                <p style="font-size:14px;color:#6b7280;margin-bottom:20px;line-height:1.5;">
+                    分享链接已复制到剪贴板，<br>您可以粘贴发送给好友
+                </p>
+                <div style="background:#f3f4f6;border-radius:8px;padding:12px;margin-bottom:16px;text-align:left;">
+                    <p style="font-size:12px;color:#6b7280;margin-bottom:4px;">分享链接：</p>
+                    <p style="font-size:13px;color:#374151;word-break:break-all;">${shareUrl}</p>
+                </div>
+                <button id="closeModal" style="width:100%;padding:14px;background:#2563eb;color:white;border:none;border-radius:8px;font-size:16px;font-weight:600;cursor:pointer;">知道了</button>
+            </div>
+        `;
+        document.body.appendChild(modal);
+        modal.querySelector('#closeModal').addEventListener('click', () => {
+            document.body.removeChild(modal);
+        });
+        modal.addEventListener('click', (e) => {
+            if (e.target === modal) {
+                document.body.removeChild(modal);
+            }
+        });
     }
 
     /**
@@ -612,37 +710,6 @@ export class AnalysisResult {
     }
 
     /**
-     * 下载分享图片并复制链接
-     */
-    async downloadShareImage(imageBlob, shareUrl) {
-        // 创建下载链接
-        const url = URL.createObjectURL(imageBlob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `乒乓分析报告_${Date.now()}.png`;
-        a.click();
-        URL.revokeObjectURL(url);
-
-        // 复制分享链接
-        const fullContent = `${this.generateShareText()}\n\n${shareUrl}`;
-        try {
-            await navigator.clipboard.writeText(fullContent);
-            this.showToast('图片已保存，链接已复制到剪贴板');
-        } catch (e) {
-            // 降级方案
-            const textArea = document.createElement('textarea');
-            textArea.value = fullContent;
-            textArea.style.position = 'fixed';
-            textArea.style.opacity = '0';
-            document.body.appendChild(textArea);
-            textArea.select();
-            document.execCommand('copy');
-            document.body.removeChild(textArea);
-            this.showToast('图片已保存，链接已复制');
-        }
-    }
-
-    /**
      * 显示加载提示
      */
     showLoadingToast(message) {
@@ -664,29 +731,9 @@ export class AnalysisResult {
      * 备用方案：复制分享内容到剪贴板（文案+链接）
      */
     async fallbackToCopyLink(url) {
-        // 生成完整分享内容（文案 + 换行 + 链接）
         const shareText = this.generateShareText();
         const fullContent = `${shareText}\n\n${url}`;
-
-        try {
-            await navigator.clipboard.writeText(fullContent);
-            this.showToast('分享内容已复制，可粘贴到微信朋友圈');
-        } catch (err) {
-            // 如果 clipboard API 不支持，使用传统方法
-            const textArea = document.createElement('textarea');
-            textArea.value = fullContent;
-            textArea.style.position = 'fixed';
-            textArea.style.opacity = '0';
-            document.body.appendChild(textArea);
-            textArea.select();
-            try {
-                document.execCommand('copy');
-                this.showToast('分享内容已复制，可粘贴到微信朋友圈');
-            } catch (e) {
-                this.showToast('复制失败，请手动复制', 'error');
-            }
-            document.body.removeChild(textArea);
-        }
+        await this.copyToClipboard(fullContent);
     }
 
     /**
@@ -760,7 +807,26 @@ export class AnalysisResult {
         if (scoreEl && result.overall_score !== undefined) {
             scoreEl.classList.remove('hidden');
             scoreEl.querySelector('.text-3xl').textContent = result.overall_score;
+
+            // 更新评分标签，添加球员方向
+            const scoreLabel = scoreEl.querySelector('.text-sm');
+            if (scoreLabel) {
+                const playerLabel = this._getPlayerLabel(result.target_player);
+                scoreLabel.textContent = playerLabel ? `${playerLabel}综合评分` : '综合评分';
+            }
         }
+    }
+
+    /**
+     * 获取球员方向显示文本
+     */
+    _getPlayerLabel(targetPlayer) {
+        if (!targetPlayer) return '';
+        const autoPick = targetPlayer.auto_pick || targetPlayer;
+        if (autoPick === 'left') return '左侧球员';
+        if (autoPick === 'right') return '右侧球员';
+        if (autoPick === 'single_player') return '';
+        return '';
     }
 
     renderSummary(result) {
@@ -769,6 +835,7 @@ export class AnalysisResult {
 
         // 确保 summary 对象存在
         const summary = result.summary || {};
+        const playerLabel = this._getPlayerLabel(result.target_player);
 
         // 渲染目标球员选择器
         const targetPlayerHtml = this.renderTargetPlayerSelector(result.target_player);
@@ -809,7 +876,7 @@ export class AnalysisResult {
                             <svg class="w-5 h-5 mr-2 text-orange-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
                             </svg>
-                            需要改进 (${summary.weaknesses.length})
+                            ${playerLabel ? playerLabel + ' ' : ''}需要改进 (${summary.weaknesses.length})
                         </h4>
                         <ul class="space-y-2">
                             ${summary.weaknesses.map(w => {
@@ -817,8 +884,8 @@ export class AnalysisResult {
                                 const desc = typeof w === 'object' && w.description ? `<p class="text-xs text-gray-500 mt-1">${w.description}</p>` : '';
                                 return `
                                 <li class="flex items-start">
-                                    <span class="text-orange-500 mr-2 mt-1">•</span>
-                                    <span class="text-gray-700 text-sm">${text}</span>
+                                    <span class="text-orange-500 mr-2">•</span>
+                                    <span class="text-gray-700 text-sm leading-tight">${text}</span>
                                 </li>
                                 ${desc}
                             `}).join('')}

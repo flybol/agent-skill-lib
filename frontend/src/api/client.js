@@ -110,11 +110,16 @@ export async function uploadVideo(file, onProgress) {
 
 /**
  * 开始分析 API
+ * @param {string} taskId - 任务ID
+ * @param {string} targetPlayer - 目标球员选择 ('left' | 'right' | 'single_player')
  */
-export async function startAnalysis(taskId) {
+export async function startAnalysis(taskId, targetPlayer) {
     return apiRequest('/api/analyze', {
         method: 'POST',
-        body: JSON.stringify({ task_id: taskId }),
+        body: JSON.stringify({
+            task_id: taskId,
+            target_player: targetPlayer
+        }),
     });
 }
 

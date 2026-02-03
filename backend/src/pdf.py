@@ -11,15 +11,9 @@ from typing import Optional, List, Dict, Any
 
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import mm
-from reportlab.lib.colors import (
-    HexColor,
-    white,
-    black,
-    gray,
-    lightgrey,
-)
+from reportlab.lib.colors import HexColor
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.lib.enums import TA_LEFT, TA_CENTER, TA_RIGHT
+from reportlab.lib.enums import TA_LEFT
 from reportlab.platypus import (
     SimpleDocTemplate,
     Paragraph,
@@ -96,54 +90,64 @@ class PDFReportGenerator:
             font_name = "Helvetica"
 
         # 自定义样式
-        styles.add(ParagraphStyle(
-            name="CustomTitle",
-            parent=styles["Title"],
-            fontName=font_name,
-            fontSize=24,
-            textColor=COLOR_PRIMARY,
-            spaceAfter=12 * mm,
-            alignment=TA_CENTER,
-        ))
+        styles.add(
+            ParagraphStyle(
+                name="CustomTitle",
+                parent=styles["Title"],
+                fontName=font_name,
+                fontSize=24,
+                textColor=COLOR_PRIMARY,
+                spaceAfter=12 * mm,
+                alignment=TA_LEFT,
+            )
+        )
 
-        styles.add(ParagraphStyle(
-            name="CustomHeading1",
-            parent=styles["Heading1"],
-            fontName=font_name,
-            fontSize=18,
-            textColor=COLOR_PRIMARY,
-            spaceAfter=8 * mm,
-            spaceBefore=12 * mm,
-        ))
+        styles.add(
+            ParagraphStyle(
+                name="CustomHeading1",
+                parent=styles["Heading1"],
+                fontName=font_name,
+                fontSize=18,
+                textColor=COLOR_PRIMARY,
+                spaceAfter=8 * mm,
+                spaceBefore=12 * mm,
+            )
+        )
 
-        styles.add(ParagraphStyle(
-            name="CustomHeading2",
-            parent=styles["Heading2"],
-            fontName=font_name,
-            fontSize=14,
-            textColor=COLOR_TEXT,
-            spaceAfter=6 * mm,
-            spaceBefore=8 * mm,
-        ))
+        styles.add(
+            ParagraphStyle(
+                name="CustomHeading2",
+                parent=styles["Heading2"],
+                fontName=font_name,
+                fontSize=14,
+                textColor=COLOR_TEXT,
+                spaceAfter=6 * mm,
+                spaceBefore=8 * mm,
+            )
+        )
 
-        styles.add(ParagraphStyle(
-            name="CustomBody",
-            parent=styles["BodyText"],
-            fontName=font_name,
-            fontSize=11,
-            textColor=COLOR_TEXT,
-            spaceAfter=4 * mm,
-            leading=16,
-        ))
+        styles.add(
+            ParagraphStyle(
+                name="CustomBody",
+                parent=styles["BodyText"],
+                fontName=font_name,
+                fontSize=11,
+                textColor=COLOR_TEXT,
+                spaceAfter=4 * mm,
+                leading=16,
+            )
+        )
 
-        styles.add(ParagraphStyle(
-            name="CustomSmall",
-            parent=styles["BodyText"],
-            fontName=font_name,
-            fontSize=9,
-            textColor=COLOR_TEXT_LIGHT,
-            spaceAfter=2 * mm,
-        ))
+        styles.add(
+            ParagraphStyle(
+                name="CustomSmall",
+                parent=styles["BodyText"],
+                fontName=font_name,
+                fontSize=9,
+                textColor=COLOR_TEXT_LIGHT,
+                spaceAfter=2 * mm,
+            )
+        )
 
         return styles
 
@@ -153,7 +157,7 @@ class PDFReportGenerator:
 
         # 标题
         if self.has_chinese_font:
-            title = "🏓 乒乓球技术分析报告"
+            title = "乒乓球技术分析报告"
         else:
             title = "Table Tennis Analysis Report"
 
@@ -180,13 +184,22 @@ class PDFReportGenerator:
         ]
 
         info_table = Table(info_data, colWidths=[40 * mm, 80 * mm])
-        info_table.setStyle(TableStyle([
-            ("FONTNAME", (0, 0), (-1, -1), "ChineseFont" if self.has_chinese_font else "Helvetica"),
-            ("FONTSIZE", (0, 0), (-1, -1), 10),
-            ("TEXTCOLOR", (0, 0), (-1, -1), COLOR_TEXT_LIGHT),
-            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 4 * mm),
-        ]))
+        info_table.setStyle(
+            TableStyle(
+                [
+                    (
+                        "FONTNAME",
+                        (0, 0),
+                        (-1, -1),
+                        "ChineseFont" if self.has_chinese_font else "Helvetica",
+                    ),
+                    ("FONTSIZE", (0, 0), (-1, -1), 10),
+                    ("TEXTCOLOR", (0, 0), (-1, -1), COLOR_TEXT_LIGHT),
+                    ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 4 * mm),
+                ]
+            )
+        )
 
         self.story.append(info_table)
         self.story.append(Spacer(1, 10 * mm))
@@ -200,47 +213,14 @@ class PDFReportGenerator:
 
         styles = self._get_styles()
 
-        # 评分标题
+        # 简化评分显示：综合评分：65分
         if self.has_chinese_font:
-            score_title = "综合评分"
+            score_text = f"综合评分：{overall_score}分"
         else:
-            score_title = "Overall Score"
+            score_text = f"Overall Score: {overall_score}"
 
-        self.story.append(Paragraph(score_title, styles["CustomHeading1"]))
-
-        # 评分显示
-        # 根据分数确定颜色
-        if overall_score >= 80:
-            score_color = COLOR_SECONDARY
-        elif overall_score >= 60:
-            score_color = COLOR_WARNING
-        else:
-            score_color = COLOR_DANGER
-
-        # 评分表格
-        score_data = [
-            [str(overall_score)],
-        ]
-
-        score_table = Table(score_data, colWidths=[60 * mm], rowHeights=[25 * mm])
-        score_table.setStyle(TableStyle([
-            ("BACKGROUND", (0, 0), (-1, -1), score_color),
-            ("TEXTCOLOR", (0, 0), (-1, -1), white),
-            ("FONTNAME", (0, 0), (-1, -1), "ChineseFont" if self.has_chinese_font else "Helvetica-Bold"),
-            ("FONTSIZE", (0, 0), (-1, -1), 36),
-            ("ALIGN", (0, 0), (-1, -1), "CENTER"),
-            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-            ("ROUNDED", (0, 0), (-1, -1), 8),
-        ]))
-
-        # 居中显示
-        score_table_wrapper = Table([[score_table]], colWidths=[120 * mm])
-        score_table_wrapper.setStyle(TableStyle([
-            ("ALIGN", (0, 0), (-1, -1), "CENTER"),
-        ]))
-
-        self.story.append(score_table_wrapper)
-        self.story.append(Spacer(1, 8 * mm))
+        self.story.append(Paragraph(score_text, styles["CustomBody"]))
+        self.story.append(Spacer(1, 6 * mm))
 
     def _create_summary_section(self, result: Dict[str, Any]):
         """创建概要部分"""
@@ -278,13 +258,23 @@ class PDFReportGenerator:
         weaknesses = summary.get("weaknesses", [])
         if weaknesses:
             if self.has_chinese_font:
-                self.story.append(Paragraph("<b>需要改进:</b>", styles["CustomHeading2"]))
+                self.story.append(
+                    Paragraph("<b>需要改进:</b>", styles["CustomHeading2"])
+                )
             for weakness in weaknesses:
-                text = weakness if isinstance(weakness, str) else weakness.get("title", "")
-                desc = weakness if isinstance(weakness, str) else weakness.get("description", "")
+                text = (
+                    weakness if isinstance(weakness, str) else weakness.get("title", "")
+                )
+                desc = (
+                    weakness
+                    if isinstance(weakness, str)
+                    else weakness.get("description", "")
+                )
                 self.story.append(Paragraph(f"• {text}", styles["CustomBody"]))
                 if desc:
-                    self.story.append(Paragraph(f"  <i>{desc}</i>", styles["CustomSmall"]))
+                    self.story.append(
+                        Paragraph(f"  <i>{desc}</i>", styles["CustomSmall"])
+                    )
             self.story.append(Spacer(1, 4 * mm))
 
     def _create_frames_section(self, result: Dict[str, Any], runs_dir: Path):
@@ -326,7 +316,9 @@ class PDFReportGenerator:
                 try:
                     img = Image(str(frame_path), width=70 * mm, height=40 * mm)
                     if description:
-                        frame_data.append([img, Paragraph(description, styles["CustomSmall"])])
+                        frame_data.append(
+                            [img, Paragraph(description, styles["CustomSmall"])]
+                        )
                     else:
                         frame_data.append([img, ""])
                 except Exception:
@@ -336,13 +328,22 @@ class PDFReportGenerator:
 
         if frame_data:
             frames_table = Table(frame_data, colWidths=[75 * mm, 40 * mm])
-            frames_table.setStyle(TableStyle([
-                ("FONTNAME", (0, 0), (-1, -1), "ChineseFont" if self.has_chinese_font else "Helvetica"),
-                ("FONTSIZE", (0, 0), (-1, -1), 9),
-                ("VALIGN", (0, 0), (-1, -1), "TOP"),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 3 * mm),
-                ("LEFTPADDING", (0, 0), (-1, -1), 2 * mm),
-            ]))
+            frames_table.setStyle(
+                TableStyle(
+                    [
+                        (
+                            "FONTNAME",
+                            (0, 0),
+                            (-1, -1),
+                            "ChineseFont" if self.has_chinese_font else "Helvetica",
+                        ),
+                        ("FONTSIZE", (0, 0), (-1, -1), 9),
+                        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                        ("BOTTOMPADDING", (0, 0), (-1, -1), 3 * mm),
+                        ("LEFTPADDING", (0, 0), (-1, -1), 2 * mm),
+                    ]
+                )
+            )
             self.story.append(frames_table)
 
         self.story.append(Spacer(1, 6 * mm))
@@ -368,21 +369,25 @@ class PDFReportGenerator:
         technique = details.get("technique", {})
         if technique:
             if self.has_chinese_font:
-                self.story.append(Paragraph("<b>技术动作</b>", styles["CustomHeading2"]))
+                self.story.append(
+                    Paragraph("<b>技术动作</b>", styles["CustomHeading2"])
+                )
             for key, value in technique.items():
-                self.story.append(Paragraph(
-                    f"<b>{key}:</b> {value}", styles["CustomBody"]
-                ))
+                self.story.append(
+                    Paragraph(f"<b>{key}:</b> {value}", styles["CustomBody"])
+                )
 
         # 技术指标
         metrics = details.get("metrics", {})
         if metrics:
             if self.has_chinese_font:
-                self.story.append(Paragraph("<b>技术指标</b>", styles["CustomHeading2"]))
+                self.story.append(
+                    Paragraph("<b>技术指标</b>", styles["CustomHeading2"])
+                )
             for key, value in metrics.items():
-                self.story.append(Paragraph(
-                    f"<b>{key}:</b> {value}", styles["CustomBody"]
-                ))
+                self.story.append(
+                    Paragraph(f"<b>{key}:</b> {value}", styles["CustomBody"])
+                )
 
         self.story.append(Spacer(1, 4 * mm))
 
@@ -431,19 +436,49 @@ class PDFReportGenerator:
 
         styles = self._get_styles()
 
-        # 页脚信息
-        if self.has_chinese_font:
-            footer_text = "本报告由 AI 乒乓球教练系统自动生成"
-        else:
-            footer_text = "This report is automatically generated by AI Table Tennis Coach System"
+        # 添加分隔线
+        self.story.append(Spacer(1, 30 * mm))
 
-        self.story.append(Paragraph(footer_text, styles["CustomSmall"]))
+        # 落款信息表格
+        footer_data = [
+            ["乒乓数字教练 v1.0"],
+            ["AI Pingpong Coach System"],
+            [""],
+            [f"生成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"],
+            ["本报告由 AI 教练系统自动生成，仅供参考"],
+        ]
 
-        # 生成时间
-        generated_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        self.story.append(
-            Paragraph(f"生成时间: {generated_time}", styles["CustomSmall"])
+        footer_table = Table(footer_data, colWidths=[120 * mm])
+        footer_table.setStyle(
+            TableStyle(
+                [
+                    (
+                        "FONTNAME",
+                        (0, 0),
+                        (-1, -1),
+                        "ChineseFont" if self.has_chinese_font else "Helvetica",
+                    ),
+                    ("FONTSIZE", (0, 0), (0, 0), 16),
+                    ("FONTSIZE", (0, 1), (-1, -1), 10),
+                    ("TEXTCOLOR", (0, 0), (-1, -1), COLOR_TEXT_LIGHT),
+                    ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+                    ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 3 * mm),
+                ]
+            )
         )
+
+        # 居中显示落款
+        footer_wrapper = Table([[footer_table]], colWidths=[170 * mm])
+        footer_wrapper.setStyle(
+            TableStyle(
+                [
+                    ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+                ]
+            )
+        )
+
+        self.story.append(footer_wrapper)
 
     def generate(self, result: Dict[str, Any], runs_dir: Path) -> bytes:
         """
@@ -483,9 +518,7 @@ class PDFReportGenerator:
         self._create_header(result)
         self._create_score_section(result)
         self._create_summary_section(result)
-        self._create_details_section(result)
         self._create_suggestions_section(result)
-        self._create_frames_section(result, runs_dir)
         self._create_footer()
 
         # 生成 PDF

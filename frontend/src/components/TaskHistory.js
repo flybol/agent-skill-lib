@@ -27,16 +27,60 @@ export class TaskHistory {
     init() {
         this.render();
         this.bindEvents();
+        this.selectedTaskId = null;  // 当前选中的任务 ID
     }
 
     render() {
         this.container.innerHTML = `
             <div class="task-history" style="padding: 16px;">
+                <!-- 统计信息卡片 -->
+                <div id="statsCard" style="
+                    display: flex;
+                    align-items: center;
+                    justify-content: space-around;
+                    padding: 16px;
+                    margin-bottom: 16px;
+                    background: var(--bg-elevated);
+                    border-radius: 14px;
+                    border: 1px solid var(--divider);
+                ">
+                    <div style="text-align: center;">
+                        <p id="totalCount" style="font-size: 24px; font-weight: 600; color: var(--primary);">-</p>
+                        <p style="font-size: 12px; color: var(--text-secondary); margin-top: 4px;">总任务</p>
+                    </div>
+                    <div style="width: 1px; height: 32px; background: var(--divider);"></div>
+                    <div style="text-align: center;">
+                        <p id="completedCount" style="font-size: 24px; font-weight: 600; color: var(--success);">-</p>
+                        <p style="font-size: 12px; color: var(--text-secondary); margin-top: 4px;">已完成</p>
+                    </div>
+                    <div style="width: 1px; height: 32px; background: var(--divider);"></div>
+                    <div style="text-align: center;">
+                        <p id="failedCount" style="font-size: 24px; font-weight: 600; color: var(--error);">-</p>
+                        <p style="font-size: 12px; color: var(--text-secondary); margin-top: 4px;">失败</p>
+                    </div>
+                </div>
+
                 <!-- 标题区域 -->
                 <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px;">
-                    <h3 style="font-size: 16px; font-weight: 600; color: var(--text-primary);">历史任务</h3>
+                    <h3 style="font-size: 16px; font-weight: 600; color: var(--text-primary);">已完成任务</h3>
                     <span id="taskCount" style="font-size: 13px; color: var(--text-secondary);"></span>
                 </div>
+
+                <!-- 确认按钮（选中任务后显示） -->
+                <button id="confirmViewBtn" class="hidden" style="
+                    width: 100%;
+                    padding: 14px;
+                    background: var(--primary-gradient);
+                    color: white;
+                    border: none;
+                    border-radius: 12px;
+                    font-size: 15px;
+                    font-weight: 600;
+                    cursor: pointer;
+                    margin-bottom: 16px;
+                    box-shadow: 0 4px 12px rgba(47, 124, 246, 0.3);
+                    transition: all 0.15s ease;
+                ">查看选中任务</button>
 
                 <!-- 任务列表 -->
                 <div id="historyList" style="display: flex; flex-direction: column; gap: 12px;">
@@ -87,7 +131,15 @@ export class TaskHistory {
         try {
             const { getHistoryTasks } = await import('../api/client.js');
 
-            // 根据筛选状态传递参数
+            // 首先加载所有任务（不限状态）用于统计
+            try {
+                const allTasksData = await getHistoryTasks(1, 1000, null); // 获取大量任务用于统计
+                this.updateStats(allTasksData.tasks || []);
+            } catch (statsError) {
+                console.error('加载统计数据失败:', statsError);
+            }
+
+            // 然后根据筛选状态加载要显示的任务
             const status = this.currentFilter === 'all' ? null : this.currentFilter;
             const data = await getHistoryTasks(this.page, this.options.pageSize, status);
 
@@ -97,6 +149,20 @@ export class TaskHistory {
             // API 调用失败时使用空列表
             this.setTasks([], false);
         }
+    }
+
+    updateStats(tasks) {
+        const totalCount = tasks.length;
+        const completedCount = tasks.filter(t => t.status === 'completed').length;
+        const failedCount = tasks.filter(t => t.status === 'failed').length;
+
+        const totalCountEl = this.container.querySelector('#totalCount');
+        const completedCountEl = this.container.querySelector('#completedCount');
+        const failedCountEl = this.container.querySelector('#failedCount');
+
+        if (totalCountEl) totalCountEl.textContent = totalCount;
+        if (completedCountEl) completedCountEl.textContent = completedCount;
+        if (failedCountEl) failedCountEl.textContent = failedCount;
     }
 
     setTasks(tasks, hasMore = false) {
@@ -146,11 +212,21 @@ export class TaskHistory {
     bindTaskEvents(parentElement) {
         if (!parentElement) return;
 
+        // 绑定确认查看按钮
+        const confirmBtn = parentElement.querySelector('#confirmViewBtn');
+        if (confirmBtn) {
+            confirmBtn.addEventListener('click', () => {
+                if (this.selectedTaskId) {
+                    this.options.onTaskClick(this.selectedTaskId);
+                }
+            });
+        }
+
         parentElement.querySelectorAll('.task-item').forEach(item => {
             // 移除旧的事件监听器（如果有）
             item.cloneNode(true);
 
-            // 点击任务 - 同时支持 click 和 touchend 事件（移动端）
+            // 点击任务 - 选中高亮（不立即加载详情）
             const handleTaskClick = (e) => {
                 // 阻止默认行为防止双重触发
                 if (e.type === 'touchend') {
@@ -158,22 +234,25 @@ export class TaskHistory {
                 }
                 if (!e.target.closest('.delete-btn')) {
                     const taskId = item.dataset.taskId;
-                    console.log('任务项被点击:', taskId);
-                    this.options.onTaskClick(taskId);
+                    this.selectTask(taskId, parentElement);
                 }
             };
 
             item.addEventListener('click', handleTaskClick);
             item.addEventListener('touchend', handleTaskClick, { passive: false });
 
-            // 悬停效果（仅桌面端）
+            // 悬停效果（仅桌面端）- 只在未选中时应用
             item.addEventListener('mouseenter', () => {
-                item.style.background = 'var(--bg-elevated)';
-                item.style.borderColor = 'var(--primary)';
+                if (this.selectedTaskId !== item.dataset.taskId) {
+                    item.style.background = 'var(--bg-elevated)';
+                    item.style.borderColor = 'var(--primary)';
+                }
             });
             item.addEventListener('mouseleave', () => {
-                item.style.background = 'var(--bg-card)';
-                item.style.borderColor = 'var(--divider)';
+                if (this.selectedTaskId !== item.dataset.taskId) {
+                    item.style.background = 'var(--bg-card)';
+                    item.style.borderColor = 'var(--divider)';
+                }
             });
 
             // 删除按钮
@@ -204,6 +283,39 @@ export class TaskHistory {
         const loadMoreBtn = parentElement.querySelector('#loadMore button');
         if (loadMoreBtn) {
             loadMoreBtn.addEventListener('click', () => this.loadMore());
+        }
+    }
+
+    /**
+     * 选中任务（高亮显示）
+     */
+    selectTask(taskId, parentElement) {
+        this.selectedTaskId = taskId;
+
+        // 更新所有任务项的样式
+        parentElement.querySelectorAll('.task-item').forEach(item => {
+            if (item.dataset.taskId === taskId) {
+                // 选中的任务项
+                item.style.background = 'var(--primary-bg)';
+                item.style.borderColor = 'var(--primary)';
+                // 让文字变为白色
+                item.querySelectorAll('h4, p, span').forEach(el => {
+                    el.style.color = 'var(--primary)';
+                });
+            } else {
+                // 其他任务项恢复默认样式
+                item.style.background = 'var(--bg-card)';
+                item.style.borderColor = 'var(--divider)';
+                item.querySelectorAll('h4, p, span').forEach(el => {
+                    el.style.color = '';
+                });
+            }
+        });
+
+        // 显示确认按钮
+        const confirmBtn = parentElement.querySelector('#confirmViewBtn');
+        if (confirmBtn) {
+            confirmBtn.classList.remove('hidden');
         }
     }
 
@@ -307,6 +419,8 @@ export class TaskHistory {
             await this.options.onTaskDelete(taskId);
             this.tasks = this.tasks.filter(t => t.task_id !== taskId);
             this.renderTasks();
+            // 刷新统计数据
+            await this.refresh();
         } catch (error) {
             console.error('删除任务失败:', error);
         }

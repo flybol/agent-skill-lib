@@ -234,12 +234,40 @@ export class VideoUploader {
         }
     }
 
+    /**
+     * 通过 URL 直接设置视频（用于历史任务回显）
+     * @param {string} videoUrl - 视频 URL
+     * @param {string} fileName - 文件名
+     * @param {number} fileSize - 文件大小（字节）
+     */
+    setVideoByUrl(videoUrl, fileName = '历史视频', fileSize = 0) {
+        this.previewUrl = videoUrl;
+        const videoPreview = this.container.querySelector('#videoPreview');
+        videoPreview.src = videoUrl;
+
+        // 显示文件信息
+        const fileInfo = this.container.querySelector('#fileInfo');
+        const sizeText = fileSize > 0 ? formatFileSize(fileSize) : '未知大小';
+        fileInfo.textContent = `${fileName} (${sizeText})`;
+
+        // 切换显示
+        this.container.querySelector('#uploadPrompt').classList.add('hidden');
+        this.container.querySelector('#previewArea').classList.remove('hidden');
+
+        // 禁用主应用的分析按钮（历史任务不允许重新分析）
+        const analyzeBtn = document.getElementById('analyzeBtn');
+        if (analyzeBtn) {
+            analyzeBtn.disabled = true;
+            analyzeBtn.textContent = '🚀 开始分析';
+        }
+    }
+
     reset() {
         this.file = null;
-        if (this.previewUrl) {
+        if (this.previewUrl && this.previewUrl.startsWith('blob:')) {
             URL.revokeObjectURL(this.previewUrl);
-            this.previewUrl = null;
         }
+        this.previewUrl = null;
 
         this.container.querySelector('#fileInput').value = '';
         this.container.querySelector('#uploadPrompt').classList.remove('hidden');

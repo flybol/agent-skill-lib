@@ -229,6 +229,9 @@ export class TargetPlayerConfirm {
         const buttons = selector.querySelectorAll('.player-option-btn');
         const confirmBtn = this.container.querySelector('#confirmAnalysisBtn');
 
+        // 默认选择已设置，启用确认按钮
+        confirmBtn.disabled = false;
+
         buttons.forEach(btn => {
             btn.addEventListener('click', () => {
                 // 移除所有选中状态

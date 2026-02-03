@@ -10,6 +10,7 @@ import logging
 from datetime import datetime
 from typing import Optional, List
 from pathlib import Path
+from urllib.parse import quote
 from dotenv import load_dotenv
 from fastapi import (
     FastAPI,
@@ -103,6 +104,7 @@ class AnalysisRequest(BaseModel):
     """分析请求"""
 
     task_id: str
+    target_player: Optional[str] = None  # 用户选择的球员方向: 'left' | 'right' | 'single_player'
 
 
 class AnalysisResponse(BaseModel):
@@ -135,6 +137,8 @@ class AnalysisResult(BaseModel):
     suggestions: Optional[List[dict]] = None
     overall_score: Optional[int] = None
     target_player: Optional[dict] = None  # 目标球员配置
+    input_video: Optional[str] = None  # 原始视频 URL
+    input_video_name: Optional[str] = None  # 原始视频文件名
 
 
 # ============ 任务管理器 ============
@@ -425,7 +429,9 @@ async def simulate_analysis(task_id: str):
                 for imp in llm_result.get("improvements", [])
             ],
             # 使用 AI 给出的评分，如果没有则根据问题数量计算
-            "overall_score": llm_result.get("score", max(40, 80 - len(llm_result.get("problems", [])) * 5)),
+            "overall_score": llm_result.get(
+                "score", max(40, 80 - len(llm_result.get("problems", [])) * 5)
+            ),
         }
 
         # 保存完整报告到文件
@@ -472,8 +478,8 @@ app = FastAPI(
     description="提供视频上传、分析任务管理、结果查询等功能",
     version="1.0.0",
     lifespan=lifespan,
-    docs_url=None,      # 关闭 Swagger UI
-    redoc_url=None,     # 关闭 ReDoc
+    docs_url=None,  # 关闭 Swagger UI
+    redoc_url=None,  # 关闭 ReDoc
 )
 
 # CORS 中间件 - 必须在应用创建后添加
@@ -558,7 +564,7 @@ async def upload_video(
         meta = reader.get_meta_data()
 
         # 获取帧率
-        fps = meta.get('fps', None)
+        fps = meta.get("fps", None)
         if fps is None or fps <= 0:
             raise HTTPException(status_code=400, detail="无法读取视频帧率")
 
@@ -574,10 +580,12 @@ async def upload_video(
         if duration > max_duration:
             raise HTTPException(
                 status_code=400,
-                detail=f"视频时长不能超过 {max_duration} 秒（当前视频：{duration:.1f} 秒）"
+                detail=f"视频时长不能超过 {max_duration} 秒（当前视频：{duration:.1f} 秒）",
             )
 
-        logger.info(f"视频验证通过: 时长 {duration:.1f} 秒, 帧数 {frame_count}, 帧率 {fps:.1f} fps")
+        logger.info(
+            f"视频验证通过: 时长 {duration:.1f} 秒, 帧数 {frame_count}, 帧率 {fps:.1f} fps"
+        )
 
     except HTTPException:
         # 重新抛出 HTTPException
@@ -589,16 +597,13 @@ async def upload_video(
 
     # 生成友好的任务名称
     from datetime import datetime
+
     date_str = datetime.now().strftime("%Y%m%d")
     random_str = uuid.uuid4().hex[:6]
     task_name = f"训练视频_{date_str}_{random_str}"
 
     # 创建任务
-    task_manager.create_task_with_id(
-        task_id,
-        task_name,
-        str(video_path)
-    )
+    task_manager.create_task_with_id(task_id, task_name, str(video_path))
     task_manager.add_to_queue(task_id)
 
     return UploadResponse(
@@ -667,8 +672,8 @@ async def start_analysis(request: AnalysisRequest):
     """
     开始分析任务
 
-    - 将任务添加到处理队列
-    - 返回任务 ID 用于跟踪状态
+    - 使用用户选择的 target_player 运行完整分析
+    - 如果任务已完成则直接返回
     """
     task = task_manager.get_task(request.task_id)
     if not task:
@@ -681,12 +686,118 @@ async def start_analysis(request: AnalysisRequest):
             task_id=request.task_id,
         )
 
-    # 任务已在队列中或处理中
-    return AnalysisResponse(
-        success=True,
-        message="分析任务已启动",
-        task_id=request.task_id,
-    )
+    # 更新任务状态为处理中
+    task_manager.update_task(request.task_id, status="processing", stage="analyzing", progress=30)
+
+    video_path = Path(task.get("video_path", ""))
+    if not video_path.exists():
+        raise HTTPException(status_code=404, detail="视频文件不存在")
+
+    # 创建运行目录
+    run_dir = RUNS_DIR / request.task_id
+    run_dir.mkdir(parents=True, exist_ok=True)
+    frames_output = run_dir / "frames"
+    frames_output.mkdir(parents=True, exist_ok=True)
+
+    try:
+        # 构建目标球员配置（使用用户选择）
+        target_player_config = None
+        if request.target_player:
+            target_player_config = {
+                "mode": "user_choice",
+                "auto_pick": request.target_player,
+                "confidence": 1.0,  # 用户选择，置信度为100%
+                "reason": "用户手动选择",
+                "override": None,
+            }
+
+        # Step 1: 完整抽帧（比预处理的10帧更多）
+        from .steps import extract_frames, compute_features, run_llm_analysis, assemble_report
+
+        frames_data = extract_frames(
+            video_path,
+            frames_output,
+            max_frames=100,
+            num_segments=8,
+            frames_per_segment=12,
+            strategy="per_segment",
+        )
+
+        task_manager.update_task(request.task_id, progress=50, stage="computing_features")
+
+        # Step 2: 计算特征
+        features_data = compute_features(frames_data, num_segments=8)
+
+        task_manager.update_task(request.task_id, progress=60, stage="running_llm_analysis")
+
+        # Step 3: 运行 LLM 分析（使用用户选择的球员配置）
+        llm_result = run_llm_analysis(
+            frames_data=frames_data,
+            features_data=features_data,
+            llm_model="deepseek-chat",
+            run_dir=run_dir,
+            target_player_config=target_player_config,  # 传递用户选择
+        )
+
+        task_manager.update_task(request.task_id, progress=90, stage="assembling_report")
+
+        # Step 4: 组装报告
+        report = assemble_report(frames_data, features_data, llm_result, target_player_config)
+
+        # 保存报告到文件
+        import json
+        report_path = run_dir / "report.json"
+        with open(report_path, "w", encoding="utf-8") as f:
+            json.dump(report, f, ensure_ascii=False, indent=2)
+
+        # 构建最终结果
+        result = {
+            "task_id": request.task_id,
+            "name": task.get("name", f"训练视频_{request.task_id}"),
+            "status": "completed",
+            "created_at": task["created_at"],
+            "target_player": target_player_config or {},
+            "summary": {
+                "overview": llm_result.get("summary", ""),
+                "strengths": [],
+                "weaknesses": [
+                    {
+                        "title": w.get("title", "") if isinstance(w, dict) else w,
+                        "description": w.get("description", "") if isinstance(w, dict) else "",
+                    }
+                    for w in llm_result.get("weaknesses", [])
+                ],
+            },
+            "suggestions": [
+                {
+                    "title": s.get("title", ""),
+                    "description": s.get("description", ""),
+                    "priority": s.get("priority", "medium"),
+                }
+                for s in llm_result.get("suggestions", [])
+            ],
+            "overall_score": llm_result.get("overall_score"),
+            "details": {},
+            "key_frames": [],
+        }
+
+        # 更新任务为完成状态
+        task_manager.update_task(request.task_id, status="completed", progress=100, stage=None, result=result)
+
+        return AnalysisResponse(
+            success=True,
+            message="分析完成",
+            task_id=request.task_id,
+        )
+
+    except Exception as e:
+        logger.error(f"[{request.task_id}] 分析失败: {e}")
+        task_manager.update_task(
+            request.task_id,
+            status="failed",
+            error=str(e),
+        )
+        raise HTTPException(status_code=500, detail=f"分析失败: {str(e)}")
 
 
 @app.get("/api/results/{task_id}", response_model=AnalysisResult)
@@ -710,6 +821,7 @@ async def get_analysis_result(task_id: str):
         report_path = task_dir / "report.json"
         if report_path.exists():
             import json
+
             with open(report_path, "r", encoding="utf-8") as f:
                 result = json.load(f)
 
@@ -738,6 +850,7 @@ async def get_analysis_result(task_id: str):
         report_path = task_dir / "report.json"
         if report_path.exists():
             import json
+
             try:
                 with open(report_path, "r", encoding="utf-8") as f:
                     result = json.load(f)
@@ -753,7 +866,12 @@ async def get_analysis_result(task_id: str):
             created_at=task.get("created_at", datetime.now().isoformat()),
         )
 
-    return AnalysisResult(**result)
+    # 添加视频 URL 到结果中
+    result_dict = dict(result)
+    result_dict["input_video"] = f"/api/videos/{task_id}"
+    result_dict["input_video_name"] = task.get("name", f"训练视频_{task_id}")
+
+    return AnalysisResult(**result_dict)
 
 
 @app.get("/api/history", response_model=TaskListResponse)
@@ -775,6 +893,7 @@ async def get_history_tasks(
     # 如果内存中没有任务（服务刚重启），从文件系统恢复
     if not tasks_list:
         import json
+
         for task_dir in sorted(RUNS_DIR.iterdir(), reverse=True):
             if not task_dir.is_dir():
                 continue
@@ -795,8 +914,12 @@ async def get_history_tasks(
                         "progress": 100,
                         "stage": None,
                         "video_path": str(task_dir / "input.mp4"),
-                        "created_at": result.get("created_at", datetime.now().isoformat()),
-                        "updated_at": result.get("created_at", datetime.now().isoformat()),
+                        "created_at": result.get(
+                            "created_at", datetime.now().isoformat()
+                        ),
+                        "updated_at": result.get(
+                            "created_at", datetime.now().isoformat()
+                        ),
                         "error": None,
                         "result": result,
                     }
@@ -933,6 +1056,7 @@ async def download_pdf_report(task_id: str):
         report_path = task_dir / "report.json"
         if report_path.exists():
             import json
+
             with open(report_path, "r", encoding="utf-8") as f:
                 result = json.load(f)
             task = {"result": result}
@@ -947,6 +1071,7 @@ async def download_pdf_report(task_id: str):
         report_path = task_dir / "report.json"
         if report_path.exists():
             import json
+
             try:
                 with open(report_path, "r", encoding="utf-8") as f:
                     result = json.load(f)
@@ -961,20 +1086,79 @@ async def download_pdf_report(task_id: str):
         # 生成 PDF
         pdf_data = generate_pdf_report(result, RUNS_DIR)
 
-        # 生成文件名
-        filename = f"乒乓分析报告_{task_id}.pdf"
+        # 生成文件名（仅使用ASCII字符避免编码问题）
+        filename_ascii = f"pingpong_analysis_{task_id}.pdf"
+        filename_chinese = f"乒乓分析报告_{task_id}.pdf"
+
+        # 使用 RFC 5987 编码中文文件名
+        filename_encoded = quote(filename_chinese.encode("utf-8"))
 
         # 返回 PDF 文件
+        # filename 参数必须使用 ASCII，filename* 用于支持中文的现代浏览器
         return StreamingResponse(
             iter([pdf_data]),
             media_type="application/pdf",
             headers={
-                "Content-Disposition": f'attachment; filename="{filename}"',
+                "Content-Disposition": f"attachment; filename=\"{filename_ascii}\"; filename*=UTF-8''{filename_encoded}",
             },
         )
     except Exception as e:
         logger.error(f"生成 PDF 失败: {e}")
         raise HTTPException(status_code=500, detail=f"生成 PDF 失败: {str(e)}")
+
+
+@app.get("/api/videos/{task_id}")
+async def get_task_video(task_id: str):
+    """
+    获取任务的原始视频
+
+    - 返回任务上传的原始视频文件
+    - 支持视频流式播放
+    """
+    task_dir = RUNS_DIR / task_id
+    if not task_dir.exists():
+        raise HTTPException(status_code=404, detail="任务不存在")
+
+    # 查找视频文件（支持多种格式和命名）
+    video_extensions = [".mp4", ".mov", ".avi", ".mkv"]
+    video_path = None
+
+    # 首先尝试查找 input.mp4（标准化命名）
+    input_video = task_dir / "input.mp4"
+    if input_video.exists():
+        video_path = input_video
+    else:
+        # 查找任务目录下的任何视频文件
+        for file in task_dir.iterdir():
+            if file.is_file() and file.suffix.lower() in video_extensions:
+                video_path = file
+                break
+
+    if not video_path:
+        raise HTTPException(status_code=404, detail="视频文件不存在")
+
+    def iter_file():
+        with open(video_path, "rb") as f:
+            while chunk := f.read(8192):
+                yield chunk
+
+    # 根据文件扩展名确定 MIME 类型
+    media_type = "video/mp4"
+    if video_path.suffix.lower() == ".mov":
+        media_type = "video/quicktime"
+    elif video_path.suffix.lower() == ".avi":
+        media_type = "video/x-msvideo"
+    elif video_path.suffix.lower() == ".mkv":
+        media_type = "video/x-matroska"
+
+    return StreamingResponse(
+        iter_file(),
+        media_type=media_type,
+        headers={
+            "Content-Disposition": f"inline; filename=\"{video_path.name}\"",
+            "Accept-Ranges": "bytes",
+        },
+    )
 
 
 @app.websocket("/ws/tasks/{task_id}")
