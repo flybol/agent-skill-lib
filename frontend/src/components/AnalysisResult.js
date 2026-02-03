@@ -6,6 +6,35 @@
 import { formatTime, safeJsonParse } from '../utils/helpers.js';
 import { wechatShareManager } from '../utils/wechatShare.js';
 
+/**
+ * 获取 API 基础 URL（与 client.js 保持一致）
+ */
+function getApiBaseUrl() {
+    if (import.meta.env.VITE_API_URL) {
+        return import.meta.env.VITE_API_URL;
+    }
+    const host = window.location.hostname;
+    const protocol = window.location.protocol;
+    return `${protocol}//${host}:8000`;
+}
+
+/**
+ * 处理关键帧图片 URL
+ * 如果是相对路径，使用 API 基础 URL 构建完整 URL
+ */
+function normalizeFrameUrl(url) {
+    if (!url) return url;
+    // 如果已经是完整 URL，直接返回
+    if (url.startsWith('http://') || url.startsWith('https://')) {
+        return url;
+    }
+    // 如果是相对路径，构建完整 URL
+    const apiBaseUrl = getApiBaseUrl();
+    // 确保相对路径以 / 开头
+    const normalizedPath = url.startsWith('/') ? url : `/${url}`;
+    return `${apiBaseUrl}${normalizedPath}`;
+}
+
 export class AnalysisResult {
     constructor(container, options = {}) {
         this.container = typeof container === 'string'
@@ -994,7 +1023,7 @@ export class AnalysisResult {
             <div class="grid grid-cols-2 gap-4">
                 ${keyFrames.map((frame, index) => `
                     <div class="bg-gray-50 rounded-xl overflow-hidden">
-                        <img src="${frame.url}" alt="关键帧 ${index + 1}" class="w-full aspect-video object-cover">
+                        <img src="${normalizeFrameUrl(frame.url)}" alt="关键帧 ${index + 1}" class="w-full aspect-video object-cover" onerror="this.src='data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%22320%22 height=%22180%22%3E%3Crect fill=%22%23f3f4f6%22 width=%22320%22 height=%22180%22/%3E%3Ctext fill=%22%239ca3af%22 font-family=%22sans-serif%22 font-size=%2214%22 x=%2250%25%22 y=%2250%25%22 dominant-baseline=%22middle%22 text-anchor=%22middle%22%3E图片加载失败%3C/text%3E%3C/svg%3E'">
                         <div class="p-3">
                             <p class="text-xs text-gray-500 mb-1">帧 #${frame.frame_number || index + 1}</p>
                             ${frame.description ? `<p class="text-sm text-gray-700">${frame.description}</p>` : ''}

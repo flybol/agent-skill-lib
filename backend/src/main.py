@@ -10,7 +10,7 @@ import logging
 from datetime import datetime
 from typing import Optional, List
 from pathlib import Path
-from urllib.parse import quote
+from urllib.parse import quote, urlparse
 from dotenv import load_dotenv
 from fastapi import (
     FastAPI,
@@ -21,6 +21,7 @@ from fastapi import (
     WebSocketDisconnect,
     BackgroundTasks,
     Depends,
+    Request,
 )
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -151,6 +152,23 @@ class TaskManager:
         self.tasks: dict = {}
         self.queue: List[str] = []
         self.websocket_connections: dict = {}
+        # 从环境变量读取 BASE_URL，如果没有则留空（将在运行时推断）
+        self.base_url = os.getenv("BASE_URL", "")
+
+    def set_base_url(self, base_url: str):
+        """设置 base URL（用于 WebSocket 广播）"""
+        self.base_url = base_url
+
+    def _build_full_url(self, path: str) -> str:
+        """构建完整 URL"""
+        if not path.startswith("/"):
+            return path
+        if self.base_url:
+            # 使用配置的 BASE_URL
+            parsed = urlparse(self.base_url)
+            return f"{parsed.scheme}://{parsed.netloc}{path}"
+        # 如果没有配置 BASE_URL，返回相对路径（由 WebSocket 端点处理）
+        return path
 
     def create_task(self, name: str, video_path: str) -> str:
         """创建新任务"""
@@ -277,10 +295,20 @@ class TaskManager:
     def _notify_websocket(self, task_id: str, task_data: dict):
         """通知 WebSocket 客户端"""
         if task_id in self.websocket_connections:
+            # 修复结果中的 URL 为完整路径
+            task_to_send = dict(task_data)
+            if task_to_send.get("result"):
+                result = task_to_send["result"]
+                # 修复 key_frames 中的 URL
+                if result.get("key_frames"):
+                    for frame in result["key_frames"]:
+                        if frame.get("url") and frame["url"].startswith("/"):
+                            frame["url"] = self._build_full_url(frame["url"])
+
             dead_connections = []
             for ws in self.websocket_connections[task_id]:
                 try:
-                    asyncio.create_task(ws.send_json(task_data))
+                    asyncio.create_task(ws.send_json(task_to_send))
                 except:
                     dead_connections.append(ws)
 
@@ -405,7 +433,7 @@ async def simulate_analysis(task_id: str):
             "key_frames": [
                 {
                     "frame_number": f["frame_index"],
-                    "url": f"/api/frames/{task_id}/{Path(f['path']).name}",
+                    "url": task_manager._build_full_url(f"/api/frames/{task_id}/{Path(f['path']).name}"),
                     "description": f"时间戳: {f['timestamp']}s",
                 }
                 for f in frames_data.get("frames", [])[:10]  # 最多显示10帧
@@ -493,6 +521,24 @@ app.add_middleware(
 )
 
 
+# 中间件：自动推断并设置 BASE_URL
+@app.middleware("http")
+async def auto_detect_base_url(request: Request, call_next):
+    """自动从请求头中推断 BASE_URL 并设置到 TaskManager"""
+    # 只在没有配置 BASE_URL 环境变量时才自动推断
+    if not task_manager.base_url:
+        # 获取请求的协议和主机
+        scheme = request.headers.get("X-Forwarded-Proto", request.url.scheme)
+        host = request.headers.get("X-Forwarded-Host", request.headers.get("Host", "localhost:8000"))
+        # 构建并设置 base_url
+        inferred_base_url = f"{scheme}://{host}"
+        task_manager.set_base_url(inferred_base_url)
+        logger.info(f"自动推断 BASE_URL: {inferred_base_url}")
+
+    response = await call_next(request)
+    return response
+
+
 async def process_queue():
     """处理任务队列"""
     while True:
@@ -504,6 +550,29 @@ async def process_queue():
 
 
 # ============ API 路由 ============
+
+
+def build_full_url(request: Request, path: str) -> str:
+    """
+    构建完整的 URL（包含协议和域名）
+
+    Args:
+        request: FastAPI Request 对象
+        path: 相对路径，如 /api/videos/xxx
+
+    Returns:
+        完整 URL，如 https://example.com/api/videos/xxx
+    """
+    # 获取请求的协议（http 或 https）
+    # 优先检查 X-Forwarded-Proto 头（反向代理场景）
+    scheme = request.headers.get("X-Forwarded-Proto", request.url.scheme)
+
+    # 获取请求的 host
+    # 优先检查 X-Forwarded-Host 头（反向代理场景）
+    host = request.headers.get("X-Forwarded-Host", request.headers.get("Host", request.url.netloc))
+
+    # 构建完整 URL
+    return f"{scheme}://{host}{path}"
 
 
 @app.get("/")
@@ -801,7 +870,7 @@ async def start_analysis(request: AnalysisRequest):
 
 
 @app.get("/api/results/{task_id}", response_model=AnalysisResult)
-async def get_analysis_result(task_id: str):
+async def get_analysis_result(task_id: str, request: Request):
     """
     获取分析结果
 
@@ -866,10 +935,16 @@ async def get_analysis_result(task_id: str):
             created_at=task.get("created_at", datetime.now().isoformat()),
         )
 
-    # 添加视频 URL 到结果中
+    # 添加视频 URL 到结果中（使用完整 URL）
     result_dict = dict(result)
-    result_dict["input_video"] = f"/api/videos/{task_id}"
+    result_dict["input_video"] = build_full_url(request, f"/api/videos/{task_id}")
     result_dict["input_video_name"] = task.get("name", f"训练视频_{task_id}")
+
+    # 修复 key_frames 中的 URL 为完整 URL
+    if result_dict.get("key_frames"):
+        for frame in result_dict["key_frames"]:
+            if frame.get("url") and frame["url"].startswith("/"):
+                frame["url"] = build_full_url(request, frame["url"])
 
     return AnalysisResult(**result_dict)
 
@@ -1179,9 +1254,40 @@ async def websocket_task_updates(websocket: WebSocket, task_id: str):
     # 添加连接
     task_manager.add_websocket(task_id, websocket)
 
+    # 获取请求信息用于构建完整 URL
+    # WebSocket 可能没有 scheme，从 Host 推断或使用配置
+    host = websocket.headers.get("X-Forwarded-Host", websocket.headers.get("Host", "localhost:8000"))
+
+    # 优先使用环境变量配置的 BASE_URL
+    base_url = os.getenv("BASE_URL", "")
+    if base_url:
+        scheme = urlparse(base_url).scheme
+    else:
+        # 从 host 推断 scheme（如果是 443 端口或包含 https，则用 https）
+        if ":443" in host or "https" in websocket.headers.get("X-Forwarded-Proto", ""):
+            scheme = "https"
+        else:
+            scheme = "http"
+
+    def build_url(path: str) -> str:
+        """构建完整 URL"""
+        if not path.startswith("/"):
+            return path
+        return f"{scheme}://{host}{path}"
+
     try:
+        # 修复任务中的 URL 为完整路径
+        task_to_send = dict(task)
+        if task_to_send.get("result"):
+            result = task_to_send["result"]
+            # 修复 key_frames 中的 URL
+            if result.get("key_frames"):
+                for frame in result["key_frames"]:
+                    if frame.get("url") and frame["url"].startswith("/"):
+                        frame["url"] = build_url(frame["url"])
+
         # 发送初始状态
-        await websocket.send_json(task)
+        await websocket.send_json(task_to_send)
 
         # 保持连接，接收客户端消息（如果有）
         while True:

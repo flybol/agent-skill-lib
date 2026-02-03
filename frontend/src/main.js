@@ -19,6 +19,7 @@ import {
     getTaskQueue,
     deleteTask,
     connectTaskWebSocket,
+    normalizeFrameUrl,
 } from './api/client.js';
 import { formatTime, copyToClipboard } from './utils/helpers.js';
 import { wechatShareManager } from './utils/wechatShare.js';
@@ -743,15 +744,18 @@ class App {
                     ${keyFrames.length > 0 ? `
                     <div id="framesTab" class="tab-pane hidden">
                         <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px;">
-                            ${keyFrames.map((frame, index) => `
+                            ${keyFrames.map((frame, index) => {
+                                const frameUrl = normalizeFrameUrl(frame.url);
+                                return `
                                 <div style="background: var(--bg-elevated); border-radius: 12px; overflow: hidden; border: 1px solid var(--divider);">
-                                    <img src="${frame.url}" alt="关键帧 ${index + 1}" style="width: 100%; aspect-ratio: 16/9; object-fit: cover;">
+                                    <img src="${frameUrl}" alt="关键帧 ${index + 1}" style="width: 100%; aspect-ratio: 16/9; object-fit: cover;" onerror="this.style.display='none';this.nextElementSibling.style.display='flex';">
+                                    <div style="display:none;align-items:center;justify-content:center;padding:20px;background:var(--bg-elevated);aspect-ratio:16/9;color:var(--text-tertiary);font-size:13px;">图片加载失败</div>
                                     <div style="padding: 12px;">
                                         <p style="font-size: 11px; color: var(--text-tertiary); margin-bottom: 4px;">帧 #${frame.frame_number || index + 1}</p>
                                         ${frame.description ? `<p style="font-size: 13px; color: var(--text-secondary);">${frame.description}</p>` : ''}
                                     </div>
                                 </div>
-                            `).join('')}
+                            `}).join('')}
                         </div>
                     </div>
                     ` : ''}

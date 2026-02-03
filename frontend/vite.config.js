@@ -62,6 +62,7 @@ export default defineConfig({
         port: 5173,
         strictPort: true,
         open: true,
+        allowedHosts: ["coachagent.datacool.fun"],
         cors: true,
         proxy: {
             '/api': {

@@ -43,6 +43,21 @@ class WeChatShareManager {
             // 获取当前 URL（不含 hash）
             const url = window.location.href.split('#')[0];
 
+            // 检查是否为 IP 地址（开发环境）
+            // 微信 JS-SDK 只支持域名，不支持 IP 地址
+            const isIpAddress = /^(https?:\/\/)?(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})(:\d+)?/.test(url);
+            if (isIpAddress) {
+                console.log('检测到 IP 地址（开发环境），跳过微信 SDK 初始化');
+                return false;
+            }
+
+            // 检查是否为 localhost
+            const isLocalhost = url.includes('localhost') || url.includes('127.0.0.1');
+            if (isLocalhost) {
+                console.log('检测到 localhost（开发环境），跳过微信 SDK 初始化');
+                return false;
+            }
+
             // 请求后端获取签名配置
             const response = await fetch(`/api/wechat/jssdk-config?url=${encodeURIComponent(url)}`);
             const result = await response.json();

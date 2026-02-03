@@ -12,8 +12,12 @@ import httpx
 from typing import Optional
 from functools import lru_cache
 from pathlib import Path
+from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
+
+# 环境变量：是否启用微信功能（生产环境默认启用）
+WECHAT_ENABLED = os.getenv("WECHAT_ENABLED", "true").lower() == "true"
 
 # 微信公众号配置
 WECHAT_APP_ID = "wx0d8129746049f58a"
@@ -176,6 +180,29 @@ class WeChatJSSDK:
                 "signature": "sha1结果"
             }
         """
+        # 检查是否为开发环境
+        parsed_url = urlparse(url)
+        hostname = parsed_url.hostname or ""
+
+        # 判断是否为 IP 地址或 localhost
+        is_ip_address = (
+            hostname.replace(".", "").isdigit() or  # 纯 IP
+            hostname in ["localhost", "127.0.0.1"] or
+            hostname.startswith("192.168.") or
+            hostname.startswith("10.") or
+            hostname.startswith("172.")
+        )
+
+        # 开发环境或微信功能未启用：返回模拟数据
+        if is_ip_address or not WECHAT_ENABLED:
+            logger.info(f"开发环境或微信功能未启用，返回模拟配置。URL: {url}")
+            return {
+                "appId": self.app_id,
+                "timestamp": int(time.time()),
+                "nonceStr": self.generate_nonce_str(),
+                "signature": "dev_mode_signature",
+            }
+
         try:
             # 获取 jsapi_ticket
             ticket = await self.get_jsapi_ticket()

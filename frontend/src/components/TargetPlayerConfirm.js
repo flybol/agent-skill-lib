@@ -68,63 +68,110 @@ export class TargetPlayerConfirm {
         const confidence = targetPlayer?.confidence || 0;
         const reason = targetPlayer?.reason || '';
 
-        // 单人场景直接隐藏
-        if (autoPick === 'single_player') {
-            this.hide();
-            this.options.onConfirm('single_player');
-            return;
-        }
+        // 单人场景：显示简化确认界面
+        const isSinglePlayer = autoPick === 'single_player';
 
         const sideText = autoPick === 'left' ? '左侧球员' : '右侧球员';
         const confidencePercent = Math.round(confidence * 100);
 
-        // 显示置信度颜色
-        let confidenceColor;
-        let confidenceText;
-        if (confidence >= 0.8) {
-            confidenceColor = 'var(--success)';
-            confidenceText = '高置信度';
-        } else if (confidence >= 0.6) {
-            confidenceColor = 'var(--warning)';
-            confidenceText = '中等置信度';
+        // 根据场景生成不同的HTML
+        let panelHtml = '';
+
+        if (isSinglePlayer) {
+            // 单人场景：简洁界面
+            panelHtml = `
+                <div class="detection-panel">
+                    <div class="detection-header">
+                        <div class="detection-icon">
+                            <svg width="20" height="20" fill="none" stroke="var(--success)" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+                            </svg>
+                        </div>
+                        <div class="detection-info">
+                            <h4 class="detection-title">检测到单人训练场景</h4>
+                            <p class="detection-reason">系统判断：单人训练</p>
+                        </div>
+                    </div>
+                    <p class="detection-tip" style="font-size:12px;color:var(--text-tertiary);margin-top:8px;">
+                        如果实际是两人对打，请点击下方"选择球员"手动选择
+                    </p>
+                </div>
+            `;
         } else {
-            confidenceColor = 'var(--error)';
-            confidenceText = '低置信度，建议确认';
+            // 多人场景：显示左右选择
+            let confidenceColor, confidenceText;
+            if (confidence >= 0.8) {
+                confidenceColor = 'var(--success)';
+                confidenceText = '高置信度';
+            } else if (confidence >= 0.6) {
+                confidenceColor = 'var(--warning)';
+                confidenceText = '中等置信度';
+            } else {
+                confidenceColor = 'var(--error)';
+                confidenceText = '低置信度';
+            }
+
+            panelHtml = `
+                <div class="detection-panel">
+                    <div class="detection-header">
+                        <div class="detection-icon">
+                            <svg width="20" height="20" fill="none" stroke="var(--primary)" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                            </svg>
+                        </div>
+                        <div class="detection-info">
+                            <h4 class="detection-title">系统判断：主要击球者 = ${sideText}</h4>
+                            <p class="detection-reason">${reason}</p>
+                        </div>
+                    </div>
+
+                    <div class="detection-confidence">
+                        <span class="confidence-value" style="color: ${confidenceColor}">${confidencePercent}%</span>
+                        <span class="confidence-label">${confidenceText}</span>
+                    </div>
+                </div>
+            `;
         }
 
-        selector.innerHTML = `
-            <div class="detection-panel">
-                <div class="detection-header">
-                    <div class="detection-icon">
-                        <svg width="20" height="20" fill="none" stroke="var(--primary)" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
-                        </svg>
-                    </div>
-                    <div class="detection-info">
-                        <h4 class="detection-title">系统判断：主要击球者 = ${sideText}</h4>
-                        <p class="detection-reason">${reason}</p>
-                    </div>
-                </div>
+        // 添加球员选项
+        const optionsHtml = isSinglePlayer ? `
+            <button class="player-option-btn selected" data-choice="single_player">
+                <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+                </svg>
+                确认单人训练
+            </button>
+            <button class="player-option-btn" data-choice="left">
+                <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"/>
+                </svg>
+                选择左侧球员
+            </button>
+            <button class="player-option-btn" data-choice="right">
+                <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"/>
+                </svg>
+                选择右侧球员
+            </button>
+        ` : `
+            <button class="player-option-btn selected" data-choice="${autoPick}">
+                <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+                </svg>
+                分析${sideText}
+            </button>
+            <button class="player-option-btn" data-choice="${autoPick === 'left' ? 'right' : 'left'}">
+                <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"/>
+                </svg>
+                分析${autoPick === 'left' ? '右侧' : '左侧'}
+            </button>
+        `;
 
-                <div class="detection-confidence">
-                    <span class="confidence-value" style="color: ${confidenceColor}">${confidencePercent}%</span>
-                    <span class="confidence-label">${confidenceText}</span>
-                </div>
-
-                <div class="player-options">
-                    <button class="player-option-btn selected" data-choice="${autoPick}">
-                        <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
-                        </svg>
-                        分析${sideText}
-                    </button>
-                    <button class="player-option-btn" data-choice="${autoPick === 'left' ? 'right' : 'left'}">
-                        <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"/>
-                        </svg>
-                        分析${autoPick === 'left' ? '右侧' : '左侧'}
-                    </button>
-                </div>
+        const html = `
+            ${panelHtml}
+            <div class="player-options" style="display: grid; ${isSinglePlayer ? 'grid-template-columns: 1fr;' : 'grid-template-columns: 1fr 1fr;'} gap: 8px;">
+                ${optionsHtml}
             </div>
 
             <style>
@@ -183,12 +230,6 @@ export class TargetPlayerConfirm {
                     color: var(--text-tertiary);
                 }
 
-                .player-options {
-                    display: grid;
-                    grid-template-columns: 1fr 1fr;
-                    gap: var(--space-sm);
-                }
-
                 .player-option-btn {
                     display: flex;
                     align-items: center;
@@ -222,6 +263,8 @@ export class TargetPlayerConfirm {
                 }
             </style>
         `;
+
+        selector.innerHTML = html;
 
         this.selectedChoice = autoPick;
 

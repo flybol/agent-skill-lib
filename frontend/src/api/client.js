@@ -2,9 +2,22 @@
  * API 客户端 - 处理所有后端 API 调用
  */
 
-// 生产环境使用相对路径，开发环境可通过 VITE_API_URL 覆盖
-// 空字符串表示使用浏览器当前域名
-const API_BASE_URL = import.meta.env.VITE_API_URL ?? '';
+// API 基础 URL 配置
+// 开发环境：自动推断（使用当前页面的 host + 8000 端口）
+// 生产环境：使用相对路径或通过 VITE_API_URL 配置
+const getApiBaseUrl = () => {
+    // 如果配置了环境变量，直接使用
+    if (import.meta.env.VITE_API_URL) {
+        return import.meta.env.VITE_API_URL;
+    }
+
+    // 开发环境：使用当前页面的协议和主机，但使用 8000 端口（后端端口）
+    const host = window.location.hostname;
+    const protocol = window.location.protocol;
+    return `${protocol}//${host}:8000`;
+};
+
+const API_BASE_URL = getApiBaseUrl();
 
 // 调试：输出 API 地址
 console.log('API Base URL:', API_BASE_URL);
@@ -219,6 +232,23 @@ export function connectTaskWebSocket(taskId, onMessage, onError) {
     return ws;
 }
 
+/**
+ * 处理关键帧图片 URL
+ * 如果是相对路径，使用 API 基础 URL 构建完整 URL
+ */
+export function normalizeFrameUrl(url) {
+    if (!url) return url;
+    // 如果已经是完整 URL，直接返回
+    if (url.startsWith('http://') || url.startsWith('https://')) {
+        return url;
+    }
+    // 如果是相对路径，构建完整 URL
+    const apiBaseUrl = getApiBaseUrl();
+    // 确保相对路径以 / 开头
+    const normalizedPath = url.startsWith('/') ? url : `/${url}`;
+    return `${apiBaseUrl}${normalizedPath}`;
+}
+
 export default {
     uploadVideo,
     preprocessVideo,
@@ -229,4 +259,5 @@ export default {
     refreshTaskStatus,
     deleteTask,
     connectTaskWebSocket,
+    normalizeFrameUrl,
 };
