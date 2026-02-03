@@ -270,23 +270,8 @@ class App {
                 // 显示提示消息
                 showToast('正在查看分享的分析结果', 'info');
 
-                // 隐藏上传区域，只显示结果
-                const uploadSection = document.querySelector('.card-dark');
-                if (uploadSection) {
-                    uploadSection.style.display = 'none';
-                }
-
-                // 隐藏目标球员确认模块
-                const targetPlayerContainer = document.getElementById('targetPlayerConfirmContainer');
-                if (targetPlayerContainer) {
-                    targetPlayerContainer.style.display = 'none';
-                }
-
-                // 修改标题为"分享的分析结果"
-                const titleElement = document.querySelector('h2');
-                if (titleElement) {
-                    titleElement.textContent = '分享的分析结果';
-                }
+                // 不再隐藏上传区域和目标球员确认模块
+                // 用户可以在查看历史记录的同时上传新视频进行分析
             } else {
                 this.analysisResult.showEmpty();
                 this.hideTrainingResult();

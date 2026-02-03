@@ -1155,7 +1155,7 @@ async def get_wechat_jsdk_config(url: str):
         raise HTTPException(status_code=500, detail=f"获取配置失败: {str(e)}")
 
 
-@app.get("/api/results/{task_id}/pdf")
+@app.get("/results/{task_id}/pdf")
 async def download_pdf_report(task_id: str):
     """
     下载 PDF 分析报告
