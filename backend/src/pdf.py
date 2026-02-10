@@ -20,9 +20,6 @@ from reportlab.platypus import (
     Spacer,
     Table,
     TableStyle,
-    PageBreak,
-    Image,
-    Flowable,
 )
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
@@ -54,21 +51,30 @@ class PDFReportGenerator:
 
     def _register_fonts(self):
         """注册中文字体"""
-        # 尝试注册常见的中文字体
+        # 尝试注册常见的中文字体（按优先级排序）
         font_paths = [
-            # Windows
+            # Windows - 优先使用微软雅黑
             "C:/Windows/Fonts/msyh.ttc",  # 微软雅黑
+            "C:/Windows/Fonts/msyhbd.ttc",  # 微软雅黑粗体
             "C:/Windows/Fonts/simsun.ttc",  # 宋体
             "C:/Windows/Fonts/simhei.ttf",  # 黑体
-            # Linux
+            "C:/Windows/Fonts/simkai.ttf",  # 楷体
+            # Linux - 文泉驿字体
             "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-            # macOS
+            "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
+            "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+            "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+            "/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf",
+            # macOS - 苹方字体
             "/System/Library/Fonts/PingFang.ttc",
             "/System/Library/Fonts/STHeiti Light.ttc",
+            "/System/Library/Fonts/STHeiti.ttc",
+            "/System/Library/Fonts/Hiragino Sans GB.ttc",
         ]
 
         self.has_chinese_font = False
+        self.chinese_font_name = "Helvetica"  # 默认字体
+
         for font_path in font_paths:
             if os.path.exists(font_path):
                 try:
@@ -76,18 +82,22 @@ class PDFReportGenerator:
                     pdfmetrics.registerFont(TTFont("ChineseFont", font_path))
                     addMapping("ChineseFont", 0, 0, "ChineseFont")
                     self.has_chinese_font = True
+                    self.chinese_font_name = "ChineseFont"
+                    print(f"[PDF] 成功注册中文字体: {font_path}")
                     break
-                except Exception:
+                except Exception as e:
+                    print(f"[PDF] 注册字体失败 {font_path}: {e}")
                     continue
+
+        if not self.has_chinese_font:
+            print("[PDF] 警告: 未找到中文字体，中文可能显示为乱码")
 
     def _get_styles(self):
         """获取文档样式"""
         styles = getSampleStyleSheet()
 
-        if self.has_chinese_font:
-            font_name = "ChineseFont"
-        else:
-            font_name = "Helvetica"
+        # 使用已注册的字体名称
+        font_name = self.chinese_font_name
 
         # 自定义样式
         styles.add(
@@ -162,47 +172,7 @@ class PDFReportGenerator:
             title = "Table Tennis Analysis Report"
 
         self.story.append(Paragraph(title, styles["CustomTitle"]))
-
-        # 任务信息和时间
-        task_id = result.get("task_id", "N/A")
-        created_at = result.get("created_at", "")
-
-        # 格式化时间
-        if created_at:
-            try:
-                dt = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
-                formatted_time = dt.strftime("%Y年%m月%d日 %H:%M")
-            except:
-                formatted_time = created_at
-        else:
-            formatted_time = "N/A"
-
-        # 信息表格
-        info_data = [
-            ["任务ID:", task_id],
-            ["分析时间:", formatted_time],
-        ]
-
-        info_table = Table(info_data, colWidths=[40 * mm, 80 * mm])
-        info_table.setStyle(
-            TableStyle(
-                [
-                    (
-                        "FONTNAME",
-                        (0, 0),
-                        (-1, -1),
-                        "ChineseFont" if self.has_chinese_font else "Helvetica",
-                    ),
-                    ("FONTSIZE", (0, 0), (-1, -1), 10),
-                    ("TEXTCOLOR", (0, 0), (-1, -1), COLOR_TEXT_LIGHT),
-                    ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-                    ("BOTTOMPADDING", (0, 0), (-1, -1), 4 * mm),
-                ]
-            )
-        )
-
-        self.story.append(info_table)
-        self.story.append(Spacer(1, 10 * mm))
+        self.story.append(Spacer(1, 8 * mm))
 
     def _create_score_section(self, result: Dict[str, Any]):
         """创建评分部分"""
@@ -223,173 +193,124 @@ class PDFReportGenerator:
         self.story.append(Spacer(1, 6 * mm))
 
     def _create_summary_section(self, result: Dict[str, Any]):
-        """创建概要部分"""
+        """创建概要部分（支持新格式 coach_comment 和旧格式 summary）"""
+        styles = self._get_styles()
+
+        # 优先使用新格式 coach_comment
+        coach_comment = result.get("coach_comment", {})
         summary = result.get("summary", {})
 
-        if not summary:
+        # 确定使用哪种格式
+        if coach_comment and (coach_comment.get("strengths") or coach_comment.get("weaknesses") or coach_comment.get("summary")):
+            # 新格式：使用 coach_comment
+            # 标题
+            if self.has_chinese_font:
+                title = "教练评语"
+            else:
+                title = "Coach's Comments"
+
+            self.story.append(Paragraph(title, styles["CustomHeading1"]))
+
+            # 优点
+            strengths = coach_comment.get("strengths", "")
+            if strengths:
+                if self.has_chinese_font:
+                    self.story.append(Paragraph("<b>优点:</b>", styles["CustomHeading2"]))
+                self.story.append(Paragraph(str(strengths), styles["CustomBody"]))
+                self.story.append(Spacer(1, 4 * mm))
+
+            # 存在问题
+            weaknesses = coach_comment.get("weaknesses", "")
+            if weaknesses:
+                if self.has_chinese_font:
+                    self.story.append(Paragraph("<b>存在问题:</b>", styles["CustomHeading2"]))
+                self.story.append(Paragraph(str(weaknesses), styles["CustomBody"]))
+                self.story.append(Spacer(1, 4 * mm))
+
+            # 总结
+            summary_text = coach_comment.get("summary", "")
+            if summary_text:
+                if self.has_chinese_font:
+                    self.story.append(Paragraph("<b>总结:</b>", styles["CustomHeading2"]))
+                self.story.append(Paragraph(str(summary_text), styles["CustomBody"]))
+                self.story.append(Spacer(1, 4 * mm))
+
+        elif summary:
+            # 旧格式：使用 summary
+            if self.has_chinese_font:
+                title = "总体评价"
+            else:
+                title = "Summary"
+
+            self.story.append(Paragraph(title, styles["CustomHeading1"]))
+
+            # 概要内容
+            overview = summary.get("overview", "")
+            if overview:
+                self.story.append(Paragraph(overview, styles["CustomBody"]))
+                self.story.append(Spacer(1, 6 * mm))
+
+            # 优点列表
+            strengths = summary.get("strengths", [])
+            if strengths:
+                if self.has_chinese_font:
+                    self.story.append(Paragraph("<b>优点:</b>", styles["CustomHeading2"]))
+                for strength in strengths:
+                    self.story.append(Paragraph(f"• {strength}", styles["CustomBody"]))
+                self.story.append(Spacer(1, 4 * mm))
+
+            # 问题列表
+            weaknesses = summary.get("weaknesses", [])
+            if weaknesses:
+                if self.has_chinese_font:
+                    self.story.append(
+                        Paragraph("<b>需要改进:</b>", styles["CustomHeading2"])
+                    )
+                for weakness in weaknesses:
+                    text = (
+                        weakness if isinstance(weakness, str) else weakness.get("title", "")
+                    )
+                    desc = (
+                        weakness
+                        if isinstance(weakness, str)
+                        else weakness.get("description", "")
+                    )
+                    self.story.append(Paragraph(f"• {text}", styles["CustomBody"]))
+                    if desc:
+                        self.story.append(
+                            Paragraph(f"  <i>{desc}</i>", styles["CustomSmall"])
+                        )
+                self.story.append(Spacer(1, 4 * mm))
+
+    def _create_problems_section(self, result: Dict[str, Any]):
+        """创建训练问题部分（新格式）"""
+        problems = result.get("problems", [])
+
+        if not problems:
             return
 
         styles = self._get_styles()
 
         # 标题
         if self.has_chinese_font:
-            title = "总体评价"
+            title = "训练问题"
         else:
-            title = "Summary"
+            title = "Training Problems"
 
         self.story.append(Paragraph(title, styles["CustomHeading1"]))
-
-        # 概要内容
-        overview = summary.get("overview", "")
-        if overview:
-            self.story.append(Paragraph(overview, styles["CustomBody"]))
-            self.story.append(Spacer(1, 6 * mm))
-
-        # 优点列表
-        strengths = summary.get("strengths", [])
-        if strengths:
-            if self.has_chinese_font:
-                self.story.append(Paragraph("<b>优点:</b>", styles["CustomHeading2"]))
-            for strength in strengths:
-                self.story.append(Paragraph(f"• {strength}", styles["CustomBody"]))
-            self.story.append(Spacer(1, 4 * mm))
 
         # 问题列表
-        weaknesses = summary.get("weaknesses", [])
-        if weaknesses:
-            if self.has_chinese_font:
-                self.story.append(
-                    Paragraph("<b>需要改进:</b>", styles["CustomHeading2"])
-                )
-            for weakness in weaknesses:
-                text = (
-                    weakness if isinstance(weakness, str) else weakness.get("title", "")
-                )
-                desc = (
-                    weakness
-                    if isinstance(weakness, str)
-                    else weakness.get("description", "")
-                )
-                self.story.append(Paragraph(f"• {text}", styles["CustomBody"]))
-                if desc:
-                    self.story.append(
-                        Paragraph(f"  <i>{desc}</i>", styles["CustomSmall"])
-                    )
-            self.story.append(Spacer(1, 4 * mm))
+        for i, problem in enumerate(problems, 1):
+            title_text = problem.get("title", f"问题 {i}")
+            description = problem.get("description", "")
 
-    def _create_frames_section(self, result: Dict[str, Any], runs_dir: Path):
-        """创建关键帧部分"""
-        key_frames = result.get("key_frames", [])
+            # 问题内容
+            content = f"<b>{i}. {title_text}</b>"
+            if description:
+                content += f"<br/>{description}"
 
-        if not key_frames:
-            return
-
-        styles = self._get_styles()
-
-        # 标题
-        if self.has_chinese_font:
-            title = "关键帧分析"
-        else:
-            title = "Key Frames Analysis"
-
-        self.story.append(Paragraph(title, styles["CustomHeading1"]))
-
-        # 关键帧数据
-        task_id = result.get("task_id", "")
-        frames_dir = runs_dir / task_id / "frames"
-
-        frame_data = []
-        for i, frame in enumerate(key_frames[:6]):  # 最多显示6帧
-            frame_number = frame.get("frame_number", i + 1)
-            description = frame.get("description", "")
-
-            # 尝试加载图片
-            frame_path = None
-            if frames_dir.exists():
-                for ext in [".png", ".jpg", ".jpeg"]:
-                    potential_path = frames_dir / f"{frame_number:04d}{ext}"
-                    if potential_path.exists():
-                        frame_path = potential_path
-                        break
-
-            if frame_path and frame_path.exists():
-                try:
-                    img = Image(str(frame_path), width=70 * mm, height=40 * mm)
-                    if description:
-                        frame_data.append(
-                            [img, Paragraph(description, styles["CustomSmall"])]
-                        )
-                    else:
-                        frame_data.append([img, ""])
-                except Exception:
-                    frame_data.append([f"Frame #{frame_number}", description or ""])
-            else:
-                frame_data.append([f"Frame #{frame_number}", description or ""])
-
-        if frame_data:
-            frames_table = Table(frame_data, colWidths=[75 * mm, 40 * mm])
-            frames_table.setStyle(
-                TableStyle(
-                    [
-                        (
-                            "FONTNAME",
-                            (0, 0),
-                            (-1, -1),
-                            "ChineseFont" if self.has_chinese_font else "Helvetica",
-                        ),
-                        ("FONTSIZE", (0, 0), (-1, -1), 9),
-                        ("VALIGN", (0, 0), (-1, -1), "TOP"),
-                        ("BOTTOMPADDING", (0, 0), (-1, -1), 3 * mm),
-                        ("LEFTPADDING", (0, 0), (-1, -1), 2 * mm),
-                    ]
-                )
-            )
-            self.story.append(frames_table)
-
-        self.story.append(Spacer(1, 6 * mm))
-
-    def _create_details_section(self, result: Dict[str, Any]):
-        """创建详细分析部分"""
-        details = result.get("details", {})
-
-        if not details:
-            return
-
-        styles = self._get_styles()
-
-        # 标题
-        if self.has_chinese_font:
-            title = "详细分析"
-        else:
-            title = "Detailed Analysis"
-
-        self.story.append(Paragraph(title, styles["CustomHeading1"]))
-
-        # 技术动作分析
-        technique = details.get("technique", {})
-        if technique:
-            if self.has_chinese_font:
-                self.story.append(
-                    Paragraph("<b>技术动作</b>", styles["CustomHeading2"])
-                )
-            for key, value in technique.items():
-                self.story.append(
-                    Paragraph(f"<b>{key}:</b> {value}", styles["CustomBody"])
-                )
-
-        # 技术指标
-        metrics = details.get("metrics", {})
-        if metrics:
-            if self.has_chinese_font:
-                self.story.append(
-                    Paragraph("<b>技术指标</b>", styles["CustomHeading2"])
-                )
-            for key, value in metrics.items():
-                self.story.append(
-                    Paragraph(f"<b>{key}:</b> {value}", styles["CustomBody"])
-                )
-
-        self.story.append(Spacer(1, 4 * mm))
+            self.story.append(Paragraph(content, styles["CustomBody"]))
+            self.story.append(Spacer(1, 3 * mm))
 
     def _create_suggestions_section(self, result: Dict[str, Any]):
         """创建建议部分"""
@@ -432,12 +353,10 @@ class PDFReportGenerator:
 
     def _create_footer(self):
         """创建页脚"""
-        self.story.append(PageBreak())
-
         styles = self._get_styles()
 
-        # 添加分隔线
-        self.story.append(Spacer(1, 30 * mm))
+        # 添加分隔线（使用 Spacer 留出空间，而不是强制分页）
+        self.story.append(Spacer(1, 20 * mm))
 
         # 落款信息表格
         footer_data = [
@@ -456,7 +375,7 @@ class PDFReportGenerator:
                         "FONTNAME",
                         (0, 0),
                         (-1, -1),
-                        "ChineseFont" if self.has_chinese_font else "Helvetica",
+                        self.chinese_font_name,
                     ),
                     ("FONTSIZE", (0, 0), (0, 0), 16),
                     ("FONTSIZE", (0, 1), (-1, -1), 10),
@@ -491,6 +410,11 @@ class PDFReportGenerator:
         Returns:
             PDF 字节数据（如果 output_path 为 None）
         """
+        # 重置 story 和 buffer（防止重复调用时累积数据）
+        self.story = []
+        if self.output_path is None:
+            self.buffer = BytesIO()
+
         # 注册字体
         self._register_fonts()
 
@@ -518,7 +442,8 @@ class PDFReportGenerator:
         self._create_header(result)
         self._create_score_section(result)
         self._create_summary_section(result)
-        self._create_suggestions_section(result)
+        self._create_problems_section(result)  # 训练问题（新格式）
+        self._create_suggestions_section(result)  # 训练建议
         self._create_footer()
 
         # 生成 PDF

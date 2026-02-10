@@ -30,6 +30,44 @@ logger = logging.getLogger(__name__)
 MODEL_NAME = "glm-4v-flash"
 
 
+def _clean_coach_comment_prefix(text: str) -> str:
+    """清理教练评语中的前缀标签（优点：、存在问题：、总结：）"""
+    if not text:
+        return ""
+
+    # 定义需要移除的前缀列表
+    prefixes = ["优点：", "存在问题：", "总结："]
+
+    for prefix in prefixes:
+        if text.startswith(prefix):
+            return text[len(prefix):].strip()
+
+    return text
+
+
+def _normalize_coach_comment_field(value: Any) -> str:
+    """规范化教练评语字段，确保返回字符串
+
+    如果是数组，转换为逗号分隔的字符串
+    如果是其他类型，转换为字符串
+    """
+    if not value:
+        return ""
+
+    # 如果是数组或列表，转换为逗号分隔的字符串
+    if isinstance(value, (list, tuple)):
+        return "，".join(str(item) for item in value if item)
+
+    # 如果是字典，尝试提取内容
+    if isinstance(value, dict):
+        if "text" in value:
+            value = value["text"]
+        elif "content" in value:
+            value = value["content"]
+
+    return str(value)
+
+
 # =============================================================================
 # Data Classes（保持与旧版一致）
 # =============================================================================
@@ -57,15 +95,42 @@ class SegmentFeedback:
 
 
 @dataclass
+class TrainingProblem:
+    """训练问题"""
+    title: str  # 问题标题
+    description: str  # 问题描述
+
+
+@dataclass
+class TrainingSuggestion:
+    """训练建议"""
+    title: str  # 建议标题
+    description: str  # 建议描述
+
+
+@dataclass
+class CoachComment:
+    """教练评语"""
+    strengths: str  # 优点
+    weaknesses: str  # 存在问题
+    summary: str  # 总结
+
+
+@dataclass
 class AnalysisReport:
-    summary: str
+    """分析报告"""
+    coach_comment: CoachComment  # 教练评语
     score: int  # 总体评分（0-100）
-    problems: list[dict[str, Any]]
-    improvements: list[dict[str, Any]]
-    segment_feedback: list[dict[str, Any]]
+    problems: list[dict[str, Any]]  # 训练问题（3点）
+    suggestions: list[dict[str, Any]]  # 训练建议（3点）
+    segment_feedback: list[dict[str, Any]]  # 分段反馈
 
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        result = asdict(self)
+        # 将 coach_comment 从 dataclass 转为 dict
+        if isinstance(result.get('coach_comment'), CoachComment):
+            result['coach_comment'] = asdict(result['coach_comment'])
+        return result
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "AnalysisReport":
@@ -78,35 +143,98 @@ class AnalysisReport:
                     out[k] = d.get(k)
             return out
 
-        problems = [
-            Problem(**_pick(p, {"title", "evidence", "impact"}))
-            for p in (data.get("problems", []) or [])
-            if isinstance(p, dict)
-        ]
-        improvements = [
-            Improvement(**_pick(i, {"title", "drills", "checkpoints", "evidence"}))
-            for i in (data.get("improvements", []) or [])
-            if isinstance(i, dict)
-        ]
+        # 解析教练评语（兼容数组和字符串格式）
+        coach_comment_data = data.get("coach_comment", {})
+        if isinstance(coach_comment_data, dict):
+            # 使用规范化函数处理 strengths 和 weaknesses
+            strengths_raw = coach_comment_data.get("strengths", "")
+            weaknesses_raw = coach_comment_data.get("weaknesses", "")
+            summary_raw = coach_comment_data.get("summary", "")
+
+            coach_comment = CoachComment(
+                strengths=_clean_coach_comment_prefix(_normalize_coach_comment_field(strengths_raw)),
+                weaknesses=_clean_coach_comment_prefix(_normalize_coach_comment_field(weaknesses_raw)),
+                summary=_clean_coach_comment_prefix(_normalize_coach_comment_field(summary_raw)),
+            )
+        else:
+            # 兼容旧格式：如果没有 coach_comment，从 summary 中生成
+            summary_text = str(data.get("summary", "") or "")
+            coach_comment = CoachComment(
+                strengths="整体动作基础不错",
+                weaknesses=summary_text,
+                summary="建议继续加强练习",
+            )
+
+        # 解析训练问题（兼容旧格式）
+        problems_data = data.get("problems", [])
+        problems = []
+        for p in (problems_data or []):
+            if isinstance(p, dict):
+                # 新格式：title + description
+                if "description" in p:
+                    problems.append(TrainingProblem(
+                        title=str(p.get("title", "")),
+                        description=str(p.get("description", ""))
+                    ))
+                else:
+                    # 旧格式：title + evidence + impact
+                    problems.append(TrainingProblem(
+                        title=str(p.get("title", "")),
+                        description=f"依据：{p.get('evidence', '')}\n影响：{p.get('impact', '')}"
+                    ))
+
+        # 确保恰好3个问题
+        while len(problems) < 3:
+            problems.append(TrainingProblem(
+                title="需要加强练习",
+                description="请继续训练以提升动作稳定性"
+            ))
+
+        # 解析训练建议（兼容旧格式）
+        suggestions_data = data.get("suggestions", []) or data.get("improvements", [])
+        suggestions = []
+        for s in (suggestions_data or []):
+            if isinstance(s, dict):
+                # 新格式：title + description
+                if "description" in s:
+                    suggestions.append(TrainingSuggestion(
+                        title=str(s.get("title", "")),
+                        description=str(s.get("description", ""))
+                    ))
+                else:
+                    # 旧格式：title + drills + checkpoints
+                    drills = s.get("drills", [])
+                    drills_text = "\n".join(drills) if drills else ""
+                    suggestions.append(TrainingSuggestion(
+                        title=str(s.get("title", "")),
+                        description=drills_text or s.get("evidence", "")
+                    ))
+
+        # 确保恰好3个建议
+        while len(suggestions) < 3:
+            suggestions.append(TrainingSuggestion(
+                title="加强基础训练",
+                description="建议多加练习，提升动作规范性"
+            ))
+
+        # 解析分段反馈
         segment_feedback = [
             SegmentFeedback(**_pick(s, {"segment_id", "comment"}))
             for s in (data.get("segment_feedback", []) or [])
             if isinstance(s, dict)
         ]
 
-        # 解析评分，如果没有则根据问题数量计算
+        # 解析评分
         score = data.get("score", 0)
         if not isinstance(score, int) or score < 0 or score > 100:
-            # 如果 AI 没有返回有效评分，根据问题数量计算
             problem_count = len(problems)
-            # 基础分 80，每个问题扣 5 分，最低 40 分
             score = max(40, 80 - problem_count * 5)
 
         return cls(
-            summary=str(data.get("summary", "") or ""),
+            coach_comment=coach_comment,
             score=score,
-            problems=[asdict(p) for p in problems],
-            improvements=[asdict(i) for i in improvements],
+            problems=[asdict(p) for p in problems[:3]],  # 只取前3个
+            suggestions=[asdict(s) for s in suggestions[:3]],  # 只取前3个
             segment_feedback=[asdict(s) for s in segment_feedback],
         )
 
@@ -211,11 +339,23 @@ def build_user_prompt(
     target_player_section = ""
     if target_player_config:
         auto_pick = target_player_config.get("auto_pick", "single_player")
+        scene_type = target_player_config.get("scene_type", "single")
         confidence = target_player_config.get("confidence", 0)
         reason = target_player_config.get("reason", "")
 
         if auto_pick == "single_player":
-            target_player_section = """
+            # 根据场景类型生成不同的说明
+            if scene_type == "dual_practice":
+                target_player_section = """
+【分析对象说明（非常重要）】
+
+本次分析针对双人对练场景：
+- 画面中有两名球员同时训练
+- 只分析用户指定的目标球员
+- 所有问题、建议、点评，全部从该目标球员角度给出
+"""
+            else:
+                target_player_section = """
 【分析对象说明（非常重要）】
 
 本次分析针对单人训练场景：
@@ -273,33 +413,28 @@ def build_user_prompt(
 【必须输出的 JSON 结构（字段名固定，不得增删）】
 
 {{
-  "summary": "总体教练评价（2–3 句）",
+  "coach_comment": {{
+    "strengths": "站位较为稳定，挥拍轨迹基本顺畅，还原及时。注意：这里是字符串格式，多个优点用逗号或句号连接，不要使用数组。",
+    "weaknesses": "击球点偏后导致回球不稳定，还原节奏较慢影响连续性。注意：这里是字符串格式，多个问题用逗号或句号连接，不要使用数组。",
+    "summary": "整体动作基础良好，需要重点改进击球点和还原速度。"
+  }},
   "score": 75,
   "problems": [
     {{
-      "title": "问题标题（球员在场上能自我提醒的一句话）",
-      "evidence": "教练判断依据（基于画面和特征的整体表现，不需要具体帧号）",
-      "impact": "该问题在实战中的直接后果（例如：回球质量下降、相持容易断、被对手抢先）"
+      "title": "问题标题（简短明确）",
+      "description": "详细描述该问题的具体表现和影响"
     }}
   ],
-  "improvements": [
+  "suggestions": [
     {{
-      "title": "改进目标（描述成：要把动作练成什么状态）",
-      "drills": [
-        "训练方法 1（可直接照做，包含次数 / 时间 / 练习形式）",
-        "训练方法 2（可直接照做，包含次数 / 时间 / 练习形式）"
-      ],
-      "checkpoints": [
-        "检查点 1（球员不看视频也能判断是否达标）",
-        "检查点 2（可观察或可量化，明确通过标准）"
-      ],
-      "evidence": "为什么这样练（用教练语言说明该训练如何直接解决对应问题）"
+      "title": "建议标题（训练目标）",
+      "description": "具体的训练方法和练习内容（包含练习形式、次数、时间等）"
     }}
   ],
   "segment_feedback": [
     {{
       "segment_id": 0,
-      "comment": "该分段的教练点评：指出本段最明显的问题或亮点，并给出一句当场可执行的纠正或训练指令"
+      "comment": "该分段的教练点评"
     }}
   ]
 }}
@@ -321,55 +456,71 @@ def build_user_prompt(
 ====================================================
 【核心输出原则（必须严格遵守）】
 
-▶ summary（总体评价）必须做到：
-- 第一句：一句话点出【当前最影响得分/稳定性的核心问题】
-- 第二句：明确【训练优先级】（先练什么，其它问题暂缓）
-- 第三句（可选）：如果今天只练 10 分钟，应该怎么安排
+▶ coach_comment（教练评语）必须包含三部分：
+- strengths（优点）：字符串格式，2-3个具体优点用逗号或句号连接
+- weaknesses（存在问题）：字符串格式，2-3个主要问题用逗号或句号连接
+- summary（总结）：总体评价和训练方向
+- ⚠️ 重要：strengths 和 weaknesses 必须是字符串，不要使用数组格式
 
-▶ problems（问题诊断）：
-- problems 数组长度必须 = 3
+▶ problems（训练问题）：
+- 数组长度必须 = 3
 - 按【对得分率 / 稳定性的影响】从高到低排序
-- title 必须是球员能在场上复述的"自我提醒语"
-- evidence 用【教练判断逻辑】说明，不要提具体帧号
+- title：简短明确的问题标题
+- description：详细描述该问题的具体表现和实战影响
 
-▶ improvements（改进方案）：
-- improvements 数组长度必须 = 3，与 problems 一一对应
-- 每条 drills 必须：
-  - 明确次数 / 时间
-  - 明确练习形式（多球 / 对练 / 空挥）
-- checkpoints 必须：
-  - 不依赖视频
-  - 用"是否 / 能否 / 连续多少次"描述
-- 目标是：球员练完就知道自己有没有练对
+▶ suggestions（训练建议）：
+- 数组长度必须 = 3
+- 与 problems 问题一一对应
+- title：训练目标（要把动作练成什么状态）
+- description：具体训练方法，包含：
+  - 练习形式（多球/对练/空挥）
+  - 次数/时间要求
+  - 练习要点
 
 ▶ segment_feedback（分段点评）：
 - segment_id 必须覆盖 0 到 {num_segments - 1}
 - 每个 segment_id 恰好 1 条
-- comment 必须像教练当面说话：
-  - 先点问题或亮点
-  - 再给一句明确可执行的指令
-  - 避免分析式、论文式语言
+- comment：该分段的教练点评
 
 ====================================================
 【重要约束】
 
-❌ 不要引用具体帧号、时间点  
-❌ 不要使用“可能、也许、大概”等模糊判断  
-❌ 不要做技术论文式描述  
+❌ 不要引用具体帧号、时间点
+❌ 不要使用"可能、也许、大概"等模糊判断
+❌ 不要做技术论文式描述
+❌ 严禁使用任何表情符号或特殊图标（如 ✓、⚠、🎯 等）
+❌ 输出必须是完整的句子，不要使用列表格式
+❌ 不要在文本中使用引号包围字符串
 
 ⚠️ 如果信息不足，必须直接说明：
-“从当前画面信息无法判断”，并给出补拍建议，例如：
+"从当前画面信息无法判断"，并给出补拍建议，例如：
 - 建议机位（侧后方 45° / 正侧面）
 - 建议覆盖阶段（准备 → 引拍 → 击球 → 还原）
 - 建议拍摄条件（≥60fps，画面稳定）
 
 ====================================================
+【文本格式要求】
+
+1. 所有文本必须使用完整句子表达
+2. 禁止使用列表格式（如 "1. xxx 2. xxx"）
+3. 禁止使用特殊符号装饰（如 -、*、• 等作为列表标记）
+4. 禁止使用引号包围标题或短语
+5. 文本应该像教练口述一样自然流畅
+
+====================================================
 【最终输出要求】
 
-1️⃣ 只输出【有效 JSON】  
-2️⃣ 全部使用【简体中文】  
-3️⃣ 语气像真实教练：直接、明确、可执行  
+1️⃣ 只输出【有效 JSON】
+2️⃣ 全部使用【简体中文】
+3️⃣ 语气像真实教练：直接、明确、可执行
 4️⃣ 不要输出任何解释、说明或 Markdown
+5️⃣ coach_comment.strengths 和 coach_comment.weaknesses 必须是字符串，不要用数组
+
+⚠️ 格式检查清单：
+- coach_comment.strengths 是字符串（如："站位稳定，挥拍顺畅"）
+- coach_comment.weaknesses 是字符串（如："击球点偏后，还原较慢"）
+- problems 是数组（3个元素）
+- suggestions 是数组（3个元素）
 
 只输出 JSON。
 """.strip()
@@ -448,11 +599,35 @@ def get_mock_report(num_segments: int = 8) -> AnalysisReport:
         for i in range(n)
     ]
 
+    # 创建教练评语
+    coach_comment = CoachComment(
+        strengths="动作基础扎实，挥拍轨迹顺畅，击球点相对稳定。还原意识较好，能够保持基本的准备姿势。",
+        weaknesses="击球后还原速度偏慢，导致连续相持中容易错过最佳击球时机。重心控制不够稳定，身体起伏较大影响击球一致性。躯干带动发力不足，过度依赖手臂发力。",
+        summary="整体动作水平中等偏上，但在稳定性和衔接能力上仍有提升空间。建议优先训练还原速度和重心控制，这将显著提升连续回合的稳定性。"
+    )
+
+    # 转换为新格式
+    new_problems = []
+    for p in problems:
+        new_problems.append({
+            "title": p["title"],
+            "description": f"依据：{p['evidence']}\n影响：{p['impact']}"
+        })
+
+    new_suggestions = []
+    for imp in improvements:
+        drills_text = "\n".join(imp["drills"])
+        checkpoints_text = "\n".join(imp["checkpoints"])
+        new_suggestions.append({
+            "title": imp["title"],
+            "description": f"{drills_text}\n\n检查点：\n{checkpoints_text}\n\n{imp['evidence']}"
+        })
+
     return AnalysisReport(
-        summary="整体动作基础不错，但在稳定性与衔接上仍有提升空间。建议先把还原、重心与发力顺序练扎实。",
-        score=65,  # Mock 报告的默认评分
-        problems=problems,
-        improvements=improvements,
+        coach_comment=coach_comment,
+        score=65,
+        problems=new_problems[:3],
+        suggestions=new_suggestions[:3],
         segment_feedback=segment_feedback,
     )
 
@@ -462,35 +637,123 @@ def get_mock_report(num_segments: int = 8) -> AnalysisReport:
 # =============================================================================
 
 
+def _extract_json_by_brace_counting(text: str) -> str | None:
+    """通过大括号计数提取完整的 JSON 对象
+
+    这比简单的正则表达式更可靠，可以正确处理嵌套对象
+    """
+    first_brace = text.find("{")
+    if first_brace == -1:
+        return None
+
+    brace_count = 0
+    in_string = False
+    escape_next = False
+
+    for i, char in enumerate(text[first_brace:], start=first_brace):
+        if escape_next:
+            escape_next = False
+            continue
+
+        if char == "\\":
+            escape_next = True
+            continue
+
+        if char == '"' and not escape_next:
+            in_string = not in_string
+            continue
+
+        if not in_string:
+            if char == "{":
+                brace_count += 1
+            elif char == "}":
+                brace_count -= 1
+                if brace_count == 0:
+                    # 找到匹配的闭合大括号
+                    return text[first_brace : i + 1]
+
+    return None
+
+
 def _parse_llm_json(raw: str) -> dict[str, Any]:
+    """解析 LLM 返回的 JSON，具有强容错能力
+
+    解析策略：
+    1. 尝试直接解析
+    2. 尝试从 markdown 代码块中提取
+    3. 使用大括号计数法提取
+    4. 清理常见问题字符后重试
+    """
     s = (raw or "").strip()
     if not s:
         raise OutputParsingError("LLM response is empty.")
 
-    if "```" in s:
-        m = re.search(r"```json\s*(\{.*?\})\s*```", s, flags=re.DOTALL | re.IGNORECASE)
-        if m:
-            s = m.group(1).strip()
-        else:
-            m = re.search(r"```\s*(\{.*?\})\s*```", s, flags=re.DOTALL)
-            if m:
-                s = m.group(1).strip()
+    # 记录原始响应用于调试（截断过长的内容）
+    debug_preview = s[:500] if len(s) > 500 else s
+    logger.debug(f"[JSON Parse] 原始响应预览: {debug_preview}...")
 
-    # 兼容前后有废话：截取最外层 { ... }
-    if not s.startswith("{"):
-        first = s.find("{")
-        last = s.rfind("}")
-        if first != -1 and last != -1 and last > first:
-            s = s[first : last + 1].strip()
-
+    # 策略 1: 尝试直接解析
     try:
         obj = json.loads(s)
-    except json.JSONDecodeError as e:
-        raise OutputParsingError(f"LLM response was not valid JSON: {e}") from e
+        if isinstance(obj, dict):
+            return obj
+    except json.JSONDecodeError:
+        pass
 
-    if not isinstance(obj, dict):
-        raise OutputParsingError("LLM JSON root is not an object (dict).")
-    return obj
+    # 策略 2: 尝试从 markdown 代码块中提取
+    if "```" in s:
+        # 尝试 ```json ... ```
+        m = re.search(r"```json\s*\n(.*?)\n```", s, flags=re.DOTALL | re.IGNORECASE)
+        if not m:
+            # 尝试 ``` ... ```
+            m = re.search(r"```\s*\n(.*?)\n```", s, flags=re.DOTALL)
+
+        if m:
+            extracted = m.group(1).strip()
+            try:
+                obj = json.loads(extracted)
+                if isinstance(obj, dict):
+                    logger.debug("[JSON Parse] 从 markdown 代码块提取成功")
+                    return obj
+            except json.JSONDecodeError:
+                pass
+
+    # 策略 3: 使用大括号计数法提取（最可靠）
+    extracted = _extract_json_by_brace_counting(s)
+    if extracted:
+        try:
+            obj = json.loads(extracted)
+            if isinstance(obj, dict):
+                logger.debug("[JSON Parse] 使用大括号计数法提取成功")
+                return obj
+        except json.JSONDecodeError as e:
+            logger.debug(f"[JSON Parse] 大括号计数法提取后仍失败: {e}")
+
+    # 策略 4: 清理常见问题后重试
+    # 移除可能导致问题的控制字符
+    cleaned = s
+    # 移除 BOM
+    cleaned = cleaned.replace("\ufeff", "")
+    # 移除其他控制字符（保留换行和制表符）
+    cleaned = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", "", cleaned)
+
+    if cleaned != s:
+        try:
+            obj = json.loads(cleaned)
+            if isinstance(obj, dict):
+                logger.debug("[JSON Parse] 清理控制字符后解析成功")
+                return obj
+        except json.JSONDecodeError:
+            pass
+
+    # 所有策略都失败，抛出详细错误
+    # 截取原始响应的一部分用于错误信息
+    error_context = s[:200] if len(s) > 200 else s
+    raise OutputParsingError(
+        f"LLM response was not valid JSON. "
+        f"Tried 4 parsing strategies. "
+        f"Response preview: {error_context}..."
+    )
 
 
 # =============================================================================
@@ -546,9 +809,15 @@ def analyze_video(
     mode: str = AGENT_MODE_REAL,
     target_player_config: dict[str, Any] | None = None,
 ) -> AnalysisReport:
-    """文本分析入口：frames_summary + features_summary -> JSON 报告"""
+    """文本分析入口：frames_summary + features_summary -> JSON 报告
+
+    如果 mode 是 MOCK，抛出错误而不是返回 mock 数据
+    """
     if mode == AGENT_MODE_MOCK:
-        return get_mock_report(num_segments)
+        raise AgentError(
+            "Mock 模式已禁用。请配置 ZHIPU_API_KEY 或 DEEPSEEK_API_KEY 环境变量 "
+            "以使用真实的 AI 分析功能。"
+        )
 
     if mode != AGENT_MODE_REAL:
         raise AgentError(f"Unknown agent mode: {mode}")
@@ -571,16 +840,11 @@ def analyze_video_with_fallback(
     mode: str = AGENT_MODE_MOCK,
     target_player_config: dict[str, Any] | None = None,
 ) -> AnalysisReport:
-    """失败兜底：任何异常 -> mock"""
-    try:
-        return analyze_video(frames_summary, features_summary, num_segments, mode, target_player_config)
-    except AgentError as e:
-        logger.warning(f"Agent failed, falling back to mock: {e}")
-        return get_mock_report(num_segments)
-    except Exception as e:
-        logger.error(f"Unexpected error in agent: {e}")
-        logger.warning("Falling back to mock due to unexpected error.")
-        return get_mock_report(num_segments)
+    """分析视频并返回报告
+
+    如果 LLM 返回无效 JSON 或调用失败，直接抛出错误而不降级到 mock
+    """
+    return analyze_video(frames_summary, features_summary, num_segments, mode, target_player_config)
 
 
 def analyze_images(
@@ -596,9 +860,14 @@ def analyze_images(
     说明：
     - glm-4.7-flash 为文本模型，这里不会上传图片内容。
     - 我们只把"图片文件名列表"作为补充说明，并主要依赖 frames_summary 做分析。
+
+    如果 mode 是 MOCK，抛出错误而不是返回 mock 数据
     """
     if mode == AGENT_MODE_MOCK:
-        return get_mock_report(num_segments)
+        raise AgentError(
+            "Mock 模式已禁用。请配置 ZHIPU_API_KEY 或 DEEPSEEK_API_KEY 环境变量 "
+            "以使用真实的 AI 分析功能。"
+        )
 
     if mode != AGENT_MODE_REAL:
         raise AgentError(f"Unknown agent mode: {mode}")
@@ -630,13 +899,8 @@ def analyze_images_with_fallback(
     mode: str = AGENT_MODE_MOCK,
     target_player_config: dict[str, Any] | None = None,
 ) -> AnalysisReport:
-    """失败兜底：任何异常 -> mock"""
-    try:
-        return analyze_images(frames_summary, num_segments, image_paths, mode, target_player_config)
-    except AgentError as e:
-        logger.warning(f"Vision/text agent failed, falling back to mock: {e}")
-        return get_mock_report(num_segments)
-    except Exception as e:
-        logger.error(f"Unexpected error in vision/text agent: {e}")
-        logger.warning("Falling back to mock due to unexpected error.")
-        return get_mock_report(num_segments)
+    """分析图片并返回报告
+
+    如果 LLM 返回无效 JSON 或调用失败，直接抛出错误而不降级到 mock
+    """
+    return analyze_images(frames_summary, num_segments, image_paths, mode, target_player_config)

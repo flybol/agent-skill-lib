@@ -2,6 +2,8 @@
  * 专业训练工具风格
  */
 
+@import "tailwindcss";
+
 :root {
     /* 背景色 - 深蓝黑 */
     --bg-primary: #0E1117;
@@ -95,6 +97,12 @@ body {
     cursor: pointer;
     transition: all 0.2s ease;
     box-shadow: 0 4px 16px rgba(47, 124, 246, 0.3);
+    /* iOS Safari 兼容性 */
+    -webkit-tap-highlight-color: rgba(47, 124, 246, 0.3);
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    user-select: none;
+    touch-action: manipulation;
 }
 
 .btn-primary:hover {
@@ -104,6 +112,15 @@ body {
 
 .btn-primary:active {
     transform: translateY(0);
+}
+
+/* 禁用状态 */
+.btn-primary:disabled,
+.btn-primary[disabled] {
+    opacity: 0.5;
+    cursor: not-allowed;
+    pointer-events: none;
+    -webkit-tap-highlight-color: transparent;
 }
 
 /* 次要按钮 */
@@ -117,11 +134,21 @@ body {
     font-weight: 500;
     cursor: pointer;
     transition: all 0.15s ease;
+    /* iOS Safari 兼容性 */
+    -webkit-tap-highlight-color: rgba(255, 255, 255, 0.2);
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    user-select: none;
+    touch-action: manipulation;
 }
 
 .btn-secondary:hover {
     background: var(--bg-card);
     border-color: var(--divider-thick);
+}
+
+.btn-secondary:active {
+    transform: scale(0.98);
 }
 
 /* 文字按钮 */
@@ -134,6 +161,12 @@ body {
     font-weight: 500;
     cursor: pointer;
     transition: color 0.15s ease;
+    /* iOS Safari 兼容性 */
+    -webkit-tap-highlight-color: rgba(255, 255, 255, 0.1);
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    user-select: none;
+    touch-action: manipulation;
 }
 
 .btn-ghost:hover {
@@ -153,11 +186,21 @@ body {
     display: inline-flex;
     align-items: center;
     justify-content: center;
+    /* iOS Safari 兼容性 */
+    -webkit-tap-highlight-color: rgba(255, 255, 255, 0.1);
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    user-select: none;
+    touch-action: manipulation;
 }
 
 .icon-btn:hover {
     background: var(--bg-elevated);
     color: var(--text-primary);
+}
+
+.icon-btn:active {
+    transform: scale(0.95);
 }
 
 /* 上传区域 */
@@ -183,17 +226,22 @@ body {
 
 /* 进度条 */
 .progress-bar {
-    height: 4px;
+    height: 8px;
     background: var(--bg-elevated);
-    border-radius: 2px;
+    border-radius: 4px;
     overflow: hidden;
 }
 
 .progress-bar-fill {
     height: 100%;
     background: var(--primary-gradient);
-    border-radius: 2px;
+    border-radius: 4px;
     transition: width 0.3s ease;
+}
+
+/* 上传进度容器 */
+.upload-progress {
+    padding: 12px 0;
 }
 
 /* 检查清单项 */

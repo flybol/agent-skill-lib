@@ -165,20 +165,21 @@ export async function copyToClipboard(text) {
  */
 export function validateVideoFile(file, duration = null) {
     const validTypes = ['video/mp4', 'video/quicktime', 'video/x-msvideo'];
-    const maxSize = 500 * 1024 * 1024; // 500MB
-    const maxDuration = 5; // 最大5秒
+    const maxSize = 20 * 1024 * 1024; // 20MB
 
     if (!validTypes.includes(file.type)) {
         throw new Error('仅支持 MP4、MOV、AVI 格式的视频');
     }
 
     if (file.size > maxSize) {
-        throw new Error('视频文件大小不能超过 500MB');
+        throw new Error('视频文件大小不能超过 20MB');
     }
 
     // 验证视频时长（如果提供了时长信息）
-    if (duration !== null && duration > maxDuration) {
-        throw new Error(`视频时长不能超过 ${maxDuration} 秒（当前视频：${duration.toFixed(1)} 秒）`);
+    // 实际校验使用 6 秒，容错处理边界情况
+    // 错误提示仍显示 5 秒，给用户更好的体验
+    if (duration !== null && duration > 6.0) {
+        throw new Error(`视频时长不能超过 5 秒（当前视频：${duration.toFixed(1)} 秒）`);
     }
 
     return true;

@@ -7,36 +7,117 @@ import './styles/theme-dark.css';
 import { VideoUploader, showToast } from './components/VideoUploader.js';
 import { TaskQueue, TaskStatusIndicator } from './components/TaskQueue.js';
 import { AnalysisResult } from './components/AnalysisResult.js';
+import { AnalysisStatus } from './components/AnalysisStatus.js';
 import { TaskHistory } from './components/TaskHistory.js';
 import { Drawer } from './components/Drawer.js';
 import { TargetPlayerConfirm } from './components/TargetPlayerConfirm.js';
 import {
     uploadVideo,
-    preprocessVideo,
     startAnalysis as startAnalysisAPI,
     getAnalysisResult,
     getHistoryTasks,
     getTaskQueue,
     deleteTask,
+    shareTask,
     connectTaskWebSocket,
-    normalizeFrameUrl,
+    API_BASE_URL,
 } from './api/client.js';
 import { formatTime, copyToClipboard } from './utils/helpers.js';
 import { wechatShareManager } from './utils/wechatShare.js';
+import { getOrCreateUserId } from './utils/userCookie.js';
+
+// HTML 转义辅助函数，防止 XSS 和显示问题
+function escapeHtml(text) {
+    if (text === null || text === undefined) return '';
+    const div = document.createElement('div');
+    div.textContent = String(text);
+    return div.innerHTML;
+}
+
+// 安全显示文本内容的辅助函数
+function safeText(text) {
+    if (text === null || text === undefined) return '';
+    return String(text);
+}
 
 class App {
     constructor() {
         this.currentTask = null;
         this.wsConnection = null;
         this.drawer = new Drawer({ position: 'right' });
+        this.userId = null; // 用户标识
         this.init();
     }
 
     init() {
+        // 首先检查 cookie 支持并获取用户标识
+        const cookieResult = getOrCreateUserId();
+        if (cookieResult.error) {
+            // Cookie 不支持，显示错误提示
+            this.renderCookieError(cookieResult.error);
+            return;
+        }
+        this.userId = cookieResult.userId;
+
         this.render();
         this.initComponents();
         this.bindEvents();
         this.loadInitialData();
+    }
+
+    renderCookieError(errorMessage) {
+        const app = document.getElementById('app');
+        app.innerHTML = `
+            <div style="
+                background: var(--bg-primary);
+                min-height: 100vh;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                padding: 20px;
+            ">
+                <div style="
+                    background: var(--bg-card);
+                    border-radius: 16px;
+                    padding: 32px 24px;
+                    max-width: 400px;
+                    text-align: center;
+                    border: 1px solid var(--divider);
+                ">
+                    <div style="
+                        width: 48px;
+                        height: 48px;
+                        margin: 0 auto 20px;
+                        background: var(--error, #ef4444);
+                        border-radius: 50%;
+                        display: flex;
+                        align-items: center;
+                        justify-content: center;
+                    ">
+                        <svg width="24" height="24" fill="none" stroke="white" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                        </svg>
+                    </div>
+                    <h2 style="
+                        font-size: 18px;
+                        font-weight: 600;
+                        color: var(--text-primary);
+                        margin-bottom: 12px;
+                    ">无法访问应用</h2>
+                    <p style="
+                        font-size: 14px;
+                        color: var(--text-secondary);
+                        line-height: 1.6;
+                        margin-bottom: 8px;
+                    ">${errorMessage}</p>
+                    <p style="
+                        font-size: 13px;
+                        color: var(--text-tertiary);
+                        line-height: 1.5;
+                    ">请在浏览器设置中允许使用 cookie，然后刷新页面重试。</p>
+                </div>
+            </div>
+        `;
     }
 
     render() {
@@ -96,7 +177,7 @@ class App {
                         <!-- 模块标题 -->
                         <div style="margin-bottom: 16px;">
                             <h2 style="font-size: 16px; font-weight: 600; color: var(--text-primary); margin-bottom: 4px;">上传训练视频</h2>
-                            <p style="font-size: 13px; color: var(--text-secondary);">选择 1~3 秒内的乒乓球训练视频（最大 10MB）</p>
+                            <p style="font-size: 13px; color: var(--text-secondary);">支持 MP4、MOV 格式，最大 5 秒，最大 20MB</p>
                         </div>
 
                         <!-- 视频上传组件容器 -->
@@ -108,17 +189,19 @@ class App {
                             <div id="taskStatusContainer"></div>
                         </div>
 
+                        <!-- 目标球员确认模块 -->
+                        <div id="targetPlayerConfirmContainer" style="margin-top: 16px;"></div>
+
                         <!-- 主行动按钮 -->
                         <button id="analyzeBtn" class="btn-primary" style="width: 100%; margin-top: 16px; font-size: 17px;" disabled>
                             🚀 开始分析
                         </button>
                     </section>
 
-                    <!-- 分割线 -->
-                    <div style="height: 1px; background: var(--divider); margin: 16px 0;"></div>
-
-                    <!-- 目标球员确认模块 -->
-                    <div id="targetPlayerConfirmContainer"></div>
+                    <!-- 分析状态组件 -->
+                    <section style="margin-top: 16px;">
+                        <div id="analysisStatusContainer"></div>
+                    </section>
 
                     <!-- 分析结果模块 -->
                     <section id="trainingResultSection" class="hidden fade-in" style="animation-delay: 0.1s;">
@@ -150,17 +233,16 @@ class App {
     initComponents() {
         // 视频上传组件
         this.videoUploader = new VideoUploader('#videoUploaderContainer', {
+            onFileSelect: (file) => {
+                this.handleFileSelect(file);
+            },
             onUploadSuccess: (result) => {
                 this.handleUploadSuccess(result);
             },
         });
 
         // 目标球员确认组件
-        this.targetPlayerConfirm = new TargetPlayerConfirm('#targetPlayerConfirmContainer', {
-            onConfirm: (choice) => {
-                this.handleTargetPlayerConfirmed(choice);
-            },
-        });
+        this.targetPlayerConfirm = new TargetPlayerConfirm('#targetPlayerConfirmContainer');
 
         // 任务状态指示器
         this.taskStatusIndicator = new TaskStatusIndicator('#taskStatusContainer');
@@ -170,6 +252,21 @@ class App {
             onShare: (result) => this.handleShare(result),
             onDownload: (result) => this.handleDownload(result),
             onReanalyze: () => this.handleReanalyze(),
+        });
+
+        // 分析状态组件
+        this.analysisStatus = new AnalysisStatus('#analysisStatusContainer', {
+            onComplete: (data) => {
+                console.log('分析完成:', data);
+                // 延迟隐藏状态组件，让用户看到完成状态
+                setTimeout(() => {
+                    this.analysisStatus.hide();
+                }, 1500);
+            },
+            onFailed: (data) => {
+                console.error('分析失败:', data);
+                // 失败状态保持显示，不自动隐藏
+            },
         });
 
         // 任务队列组件（禁用自动刷新，使用 WebSocket 实时更新）
@@ -187,28 +284,84 @@ class App {
 
     bindEvents() {
         // 历史记录按钮
-        document.getElementById('historyToggleBtn')?.addEventListener('click', async () => {
-            await this.toggleHistoryDrawer();
-        });
+        const historyBtn = document.getElementById('historyToggleBtn');
+        if (historyBtn) {
+            historyBtn.addEventListener('click', async () => {
+                await this.toggleHistoryDrawer();
+            });
+        }
 
-        // 开始分析按钮
-        document.getElementById('analyzeBtn')?.addEventListener('click', async () => {
-            if (this.videoUploader.file) {
-                // 禁用按钮，上传视频
-                const analyzeBtn = document.getElementById('analyzeBtn');
-                analyzeBtn.disabled = true;
-                analyzeBtn.textContent = '上传中...';
-
-                try {
-                    await this.videoUploader.upload();
-                    // upload 成功后会触发 handleUploadSuccess
-                } catch (error) {
-                    console.error('上传失败:', error);
-                    analyzeBtn.textContent = '🚀 开始分析';
-                    analyzeBtn.disabled = false;
+        // 开始分析按钮 - 确保正确绑定，避免 iOS Safari 兼容性问题
+        const analyzeBtn = document.getElementById('analyzeBtn');
+        if (analyzeBtn) {
+            // 使用 touchstart 和 click 确保在 iOS 上也能触发
+            analyzeBtn.addEventListener('click', async (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                if (this.currentTask) {
+                    await this.startAnalysis();
                 }
+            });
+        } else {
+            console.error('[bindEvents] analyzeBtn 没有找到，请检查 DOM 是否已渲染');
+        }
+    }
+
+    handleFileSelect(file) {
+        // 文件选择后会自动上传，此回调保留用于其他可能的扩展
+        console.log('文件已选择，正在自动上传...');
+    }
+
+    async startAnalysis() {
+        if (!this.currentTask) return;
+
+        // 获取用户选择的球员位置
+        const choice = this.targetPlayerConfirm.getChoice();
+        this.selectedTargetPlayer = choice;
+
+        // 更新按钮状态
+        const analyzeBtn = document.getElementById('analyzeBtn');
+        if (analyzeBtn) {
+            analyzeBtn.textContent = '分析中...';
+            analyzeBtn.disabled = true;
+        }
+
+        // 清空分析结果容器
+        const resultContainer = document.getElementById('analysisResultContainer');
+        if (resultContainer) {
+            resultContainer.innerHTML = '';
+        }
+
+        // 使用 AnalysisStatus 组件显示分析进度
+        if (this.analysisStatus) {
+            this.analysisStatus.update({
+                status: 'queued',
+                stage: '正在准备分析...',
+                progress: 5
+            });
+        }
+
+        // 连接 WebSocket 接收实时更新
+        this.connectWebSocket(this.currentTask.task_id);
+
+        // 开始分析，传递用户选择的目标球员
+        try {
+            await startAnalysisAPI(this.currentTask.task_id, choice);
+        } catch (error) {
+            console.error('启动分析失败:', error);
+            // 分析失败，重置按钮和状态
+            if (analyzeBtn) {
+                analyzeBtn.textContent = '🚀 开始分析';
+                analyzeBtn.disabled = false;
             }
-        });
+            if (this.analysisStatus) {
+                this.analysisStatus.update({
+                    status: 'failed',
+                    stage: error.message || '分析启动失败',
+                    progress: 0
+                });
+            }
+        }
     }
 
     switchPage(pageName) {
@@ -236,18 +389,16 @@ class App {
                 }
             }
 
-            // 检查 URL 参数，支持分享链接直接打开分析结果
-            const urlParams = new URLSearchParams(window.location.search);
-            const sharedTaskId = urlParams.get('task_id');
+            // 加载历史任务数据
+            const historyData = await getHistoryTasks(1, 20);
+            console.log('已加载历史任务:', historyData);
 
-            if (sharedTaskId) {
-                // 有分享的任务 ID，加载并显示该分析结果
-                console.log('检测到分享链接，加载任务:', sharedTaskId);
-                await this.loadSharedResult(sharedTaskId);
-            } else {
-                // 正常加载历史任务数据
-                const historyData = await getHistoryTasks(1, 20);
-                console.log('已加载历史任务:', historyData);
+            // 检查 URL 中是否有 task_id 参数，如果有则自动加载该任务的分析结果
+            const urlParams = new URLSearchParams(window.location.search);
+            const taskId = urlParams.get('task_id');
+            if (taskId) {
+                console.log('检测到 URL 中的 task_id:', taskId);
+                await this.loadSharedResult(taskId);
             }
         } catch (error) {
             console.error('加载初始数据失败:', error);
@@ -260,18 +411,41 @@ class App {
      */
     async loadSharedResult(taskId) {
         try {
+            // 设置当前任务
+            this.currentTask = { task_id: taskId };
             this.analysisResult.showLoading();
             const result = await getAnalysisResult(taskId);
 
             if (result && result.status === 'completed') {
+                // 确保 result 有必要的字段
+                if (!result.summary) result.summary = {};
+                if (!result.suggestions) result.suggestions = [];
+                if (!result.details) result.details = {};
+
+                // 从 result 中提取目标球员信息并设置
+                if (result.target_player) {
+                    const autoPick = result.target_player.auto_pick || result.target_player;
+                    this.selectedTargetPlayer = autoPick;
+                    // 更新下拉选择器的值
+                    this.targetPlayerConfirm.selectedChoice = autoPick;
+                    const select = document.getElementById('playerPositionSelect');
+                    if (select) {
+                        select.value = autoPick;
+                    }
+                }
+
+                // 恢复历史任务的视频
+                const host = window.location.hostname;
+                const protocol = window.location.protocol;
+                const videoUrl = `${protocol}//${host}:8000/videos/${taskId}`;
+                const fileName = result.name || `训练视频_${taskId}`;
+                this.videoUploader.setVideoByUrl(videoUrl, fileName);
+
                 // 显示分享的结果
                 this.displayAnalysisResult(result);
 
                 // 显示提示消息
                 showToast('正在查看分享的分析结果', 'info');
-
-                // 不再隐藏上传区域和目标球员确认模块
-                // 用户可以在查看历史记录的同时上传新视频进行分析
             } else {
                 this.analysisResult.showEmpty();
                 this.hideTrainingResult();
@@ -288,70 +462,24 @@ class App {
     async handleUploadSuccess(result) {
         this.currentTask = result.task;
 
-        // 更新按钮状态为"检测中..."
+        // 清空之前的分析结果（防止分享旧结果）
+        this.analysisResult.showEmpty();
+        this.hideTrainingResult();
+
+        // 清空 main.js 中直接渲染的结果容器
+        const resultContainer = document.getElementById('analysisResultContainer');
+        if (resultContainer) {
+            resultContainer.innerHTML = '';
+        }
+
+        // 重置按钮状态
         const analyzeBtn = document.getElementById('analyzeBtn');
         if (analyzeBtn) {
-            analyzeBtn.textContent = '检测中...';
-            analyzeBtn.disabled = true;
+            analyzeBtn.textContent = '🚀 开始分析';
+            analyzeBtn.disabled = false;
         }
 
-        // 显示预处理进度
-        this.showPreprocessProgress();
-
-        try {
-            // 调用预处理接口，检测目标运动员
-            const preprocessResult = await preprocessVideo(result.task_id);
-
-            // 显示目标运动员确认界面
-            this.targetPlayerConfirm.setTargetPlayer(preprocessResult.target_player);
-
-            // 隐藏预处理进度
-            const resultContainer = document.getElementById('analysisResultContainer');
-            if (resultContainer) {
-                resultContainer.innerHTML = '';
-            }
-
-            // 检测完成，如果是单人场景，按钮保持"检测中..."等待分析开始
-            // 如果是多人场景，保持"检测中..."状态
-        } catch (error) {
-            console.error('预处理失败:', error);
-            // 预处理失败时，直接显示分析进度（降级处理）
-            this.connectWebSocket(result.task_id);
-            this.showAnalysisProgress();
-        }
-    }
-
-    async handleTargetPlayerConfirmed(choice) {
-        // 保存用户选择
-        this.selectedTargetPlayer = choice;
-
-        // 隐藏确认界面
-        this.targetPlayerConfirm.hide();
-
-        // 更新按钮状态为"分析中..."
-        const analyzeBtn = document.getElementById('analyzeBtn');
-        if (analyzeBtn) {
-            analyzeBtn.textContent = '分析中...';
-            analyzeBtn.disabled = true;
-        }
-
-        // 显示分析进度
-        this.showAnalysisProgress();
-
-        // 连接 WebSocket 接收实时更新
-        this.connectWebSocket(this.currentTask.task_id);
-
-        // 开始分析，传递用户选择的目标球员
-        try {
-            await startAnalysisAPI(this.currentTask.task_id, choice);
-        } catch (error) {
-            console.error('启动分析失败:', error);
-            // 分析失败，重置按钮
-            if (analyzeBtn) {
-                analyzeBtn.textContent = '🚀 开始分析';
-                analyzeBtn.disabled = false;
-            }
-        }
+        showToast('视频上传成功，请点击"开始分析"按钮', 'info');
     }
 
     showPreprocessProgress() {
@@ -388,18 +516,52 @@ class App {
 
         resultContainer.innerHTML = `
             <div style="padding: 32px 20px; text-align: center;">
+                <!-- 加载动画 -->
                 <div style="
-                    width: 32px;
-                    height: 32px;
-                    margin: 0 auto 16px;
-                    border: 3px solid var(--bg-elevated);
+                    width: 48px;
+                    height: 48px;
+                    margin: 0 auto 20px;
+                    border: 4px solid var(--bg-elevated);
                     border-top-color: var(--primary);
                     border-radius: 50%;
                     animation: spin 0.8s linear infinite;
                 "></div>
-                <p style="font-size: 15px; color: var(--text-secondary);">AI 正在分析中...</p>
-                <p style="font-size: 12px; color: var(--text-tertiary); margin-top: 4px;">
-                    <span id="analysisStage">视频抽帧中...</span>
+
+                <!-- 状态标题 -->
+                <p id="analysisStatus" style="font-size: 16px; font-weight: 500; color: var(--text-primary); margin-bottom: 8px;">
+                    AI 正在分析中...
+                </p>
+
+                <!-- 当前阶段 -->
+                <p id="analysisStage" style="font-size: 14px; color: var(--text-secondary); margin-bottom: 20px;">
+                    视频抽帧中...
+                </p>
+
+                <!-- 进度条 -->
+                <div style="max-width: 280px; margin: 0 auto;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                        <span style="font-size: 12px; color: var(--text-tertiary);">分析进度</span>
+                        <span id="analysisProgress" style="font-size: 14px; font-weight: 600; color: var(--primary);">0%</span>
+                    </div>
+                    <div style="
+                        height: 8px;
+                        background: var(--bg-elevated);
+                        border-radius: 10px;
+                        overflow: hidden;
+                    ">
+                        <div id="analysisProgressBar" style="
+                            height: 100%;
+                            width: 0%;
+                            background: linear-gradient(90deg, var(--primary), #60a5fa);
+                            border-radius: 10px;
+                            transition: width 0.3s ease;
+                        "></div>
+                    </div>
+                </div>
+
+                <!-- 提示信息 -->
+                <p style="font-size: 12px; color: var(--text-tertiary); margin-top: 16px;">
+                    预计需要 10~15 秒
                 </p>
             </div>
             <style>
@@ -408,20 +570,6 @@ class App {
                 }
             </style>
         `;
-
-        // 模拟进度更新
-        const stages = [
-            { text: '视频抽帧中...', delay: 800 },
-            { text: '计算动作特征...', delay: 1600 },
-            { text: 'AI 生成分析报告...', delay: 2400 },
-        ];
-
-        stages.forEach((stage, index) => {
-            setTimeout(() => {
-                const stageEl = document.getElementById('analysisStage');
-                if (stageEl) stageEl.textContent = stage.text;
-            }, stage.delay);
-        });
     }
 
     showMockResults() {
@@ -469,15 +617,6 @@ class App {
         };
     }
 
-    async startAnalysis(taskId) {
-        try {
-            const result = await startAnalysisAPI(taskId);
-            showToast(result.message, 'success');
-        } catch (error) {
-            showToast('启动分析失败: ' + error.message, 'error');
-        }
-    }
-
     connectWebSocket(taskId) {
         // 关闭之前的连接
         if (this.wsConnection) {
@@ -496,15 +635,15 @@ class App {
     }
 
     handleWebSocketMessage(data) {
-        // 更新进度显示
-        const stageEl = document.getElementById('analysisStage');
-        if (stageEl && data.stage) {
-            stageEl.textContent = data.stage + '...';
-        }
+        console.log('[WebSocket] 收到状态更新:', data);
+        console.log('[WebSocket] analysisStatus 存在?', !!this.analysisStatus);
 
-        // 更新进度条（如果有）
-        if (data.progress !== undefined) {
-            // 可以添加进度条显示
+        // 使用 AnalysisStatus 组件显示状态
+        if (this.analysisStatus) {
+            console.log('[WebSocket] 调用 analysisStatus.update');
+            this.analysisStatus.update(data);
+        } else {
+            console.warn('[WebSocket] analysisStatus 不存在!');
         }
 
         // 分析完成，获取结果
@@ -521,6 +660,13 @@ class App {
                 analyzeBtn.disabled = false;
             }
         }
+
+        // 更新当前任务状态
+        if (this.currentTask && data.task_id === this.currentTask.task_id) {
+            this.currentTask.status = data.status;
+            this.currentTask.progress = data.progress;
+            this.currentTask.stage = data.stage;
+        }
     }
 
     async handleTaskClick(taskId) {
@@ -535,7 +681,6 @@ class App {
                 if (!result.summary) result.summary = {};
                 if (!result.suggestions) result.suggestions = [];
                 if (!result.details) result.details = {};
-                if (!result.key_frames) result.key_frames = [];
 
                 // 从 result 中提取目标球员信息（用于显示标签）
                 if (result.target_player) {
@@ -543,13 +688,12 @@ class App {
                     this.selectedTargetPlayer = autoPick;
                 }
 
-                // 设置视频上传区域显示该任务的视频
-                const videoUrl = result.video_url || result.input_video;
-                if (videoUrl) {
-                    const fileName = result.input_video_name || result.task_id || '历史视频';
-                    const fileSize = result.file_size || 0;
-                    this.videoUploader.setVideoByUrl(videoUrl, fileName, fileSize);
-                }
+                // 显示历史任务的视频
+                const host = window.location.hostname;
+                const protocol = window.location.protocol;
+                const videoUrl = `${protocol}//${host}:8000/videos/${taskId}`;
+                const fileName = result.name || `训练视频_${taskId}`;
+                this.videoUploader.setVideoByUrl(videoUrl, fileName);
 
                 // 使用深色主题的 displayAnalysisResult 方法显示结果
                 this.displayAnalysisResult(result);
@@ -612,22 +756,18 @@ class App {
 
         const analyzeBtn = document.getElementById('analyzeBtn');
         if (analyzeBtn) {
-            analyzeBtn.textContent = '🚀 重新分析';
+            analyzeBtn.textContent = '重新分析';
             analyzeBtn.disabled = false;
         }
 
-        const summary = result.summary || {};
-        const keyFrames = result.key_frames || [];
-        const overallScore = result.overall_score || 0;
-        const weaknesses = summary.weaknesses || [];
-        const strengths = summary.strengths || [];
-        const suggestions = result.suggestions || summary.suggestions || [];
+        // 新数据格式：coach_comment + problems + suggestions
+        const coachComment = result.coach_comment || {};
+        const overallScore = result.overall_score || result.score || 0;
+        const problems = result.problems || [];
+        const suggestions = result.suggestions || [];
 
         // 更新微信分享内容（如果在微信环境）
         this.updateWeChatShare(result);
-
-        // 获取视频URL（如果有）
-        const videoUrl = result.video_url || result.input_video || '';
 
         // 获取球员方向显示文本
         const getPlayerLabel = () => {
@@ -647,104 +787,61 @@ class App {
                     <p style="font-size: 16px; font-weight: 600; color: var(--text-primary); margin-top: 4px;">
                         ${playerLabel ? playerLabel + ' ' : ''}综合评分: <span style="color: var(--success); font-size: 24px; font-weight: 600;">${overallScore}</span>
                     </p>
-                    ${summary.overview ? `<p style="font-size: 13px; color: var(--text-secondary); margin-top: 8px; line-height: 1.5;">${summary.overview}</p>` : ''}
                 </div>
 
-                <!-- Tab 切换按钮 -->
-                <div style="display: flex; gap: 8px; margin-bottom: 16px; border-bottom: 1px solid var(--divider);">
-                    <button class="tab-btn active" data-tab="summary" style="flex: 1; padding: 10px; background: transparent; border: none; border-bottom: 2px solid var(--primary); color: var(--primary); font-size: 14px; font-weight: 500; cursor: pointer;">
-                        分析结果
-                    </button>
-                    ${videoUrl ? `
-                    <button class="tab-btn" data-tab="video" style="flex: 1; padding: 10px; background: transparent; border: none; border-bottom: 2px solid transparent; color: var(--text-secondary); font-size: 14px; font-weight: 500; cursor: pointer;">
-                        原始视频
-                    </button>
-                    ` : ''}
-                    ${keyFrames.length > 0 ? `
-                    <button class="tab-btn" data-tab="frames" style="flex: 1; padding: 10px; background: transparent; border: none; border-bottom: 2px solid transparent; color: var(--text-secondary); font-size: 14px; font-weight: 500; cursor: pointer;">
-                        关键帧 (${keyFrames.length})
-                    </button>
-                    ` : ''}
-                </div>
+                <!-- 教练评语 -->
+                ${coachComment.summary || coachComment.weaknesses || coachComment.strengths ? `
+                <div style="margin-bottom: 24px; padding: 16px; background: var(--bg-elevated); border-radius: 12px; border: 1px solid var(--divider);">
+                    <h3 style="font-size: 15px; font-weight: 600; color: var(--text-primary); margin-bottom: 12px;">教练评语</h3>
 
-                <!-- Tab 内容区域 -->
-                <div id="tabContent">
-                    <!-- 分析结果 Tab -->
-                    <div id="summaryTab" class="tab-pane">
-                        ${weaknesses.length > 0 ? `
-                        <div style="margin-bottom: 20px;">
-                            <p style="font-size: 13px; color: var(--warning); margin-bottom: 12px;">${playerLabel ? playerLabel + ' ' : ''}发现 ${weaknesses.length} 个问题</p>
-                            ${weaknesses.map(issue => `
-                                <div style="padding: 12px; background: var(--bg-elevated); border-radius: 10px; margin-bottom: 8px;">
-                                    <p style="font-size: 14px; font-weight: 500; color: var(--text-primary); margin-bottom: 4px;">${typeof issue === 'string' ? issue : issue.title || '问题'}</p>
-                                    ${issue.description ? `<p style="font-size: 13px; color: var(--text-secondary);">${issue.description}</p>` : ''}
-                                </div>
-                            `).join('')}
-                        </div>
-                        ` : ''}
-
-                        ${suggestions.length > 0 ? `
-                        <div>
-                            <p style="font-size: 13px; color: var(--success); margin-bottom: 12px;">改进措施</p>
-                            ${suggestions.map((suggestion, index) => `
-                                <div style="padding: 14px; background: var(--bg-elevated); border-radius: 12px; margin-bottom: 12px; border: 1px solid var(--divider);">
-                                    <div style="display: flex; align-items: start;">
-                                        <div style="width: 24px; height: 24px; background: var(--success-bg); border-radius: 50%; display: flex; align-items: center; justify-content: center; margin-right: 12px; flex-shrink: 0;">
-                                            <svg width="12" height="12" fill="none" stroke="var(--success)" viewBox="0 0 24 24">
-                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/>
-                                            </svg>
-                                        </div>
-                                        <div style="flex: 1;">
-                                            <p style="font-size: 15px; font-weight: 500; color: var(--text-primary); margin-bottom: 4px;">${suggestion.title || `改进建议 ${index + 1}`}</p>
-                                            <p style="font-size: 13px; color: var(--text-secondary); line-height: 1.5;">${suggestion.description}</p>
-                                        </div>
-                                    </div>
-                                </div>
-                            `).join('')}
-                        </div>
-                        ` : ''}
-
-                        ${!summary.overview && weaknesses.length === 0 && suggestions.length === 0 ? `
-                        <div style="text-align: center; padding: 40px 20px;">
-                            <p style="font-size: 14px; color: var(--text-tertiary);">暂无分析结果</p>
-                        </div>
-                        ` : ''}
-                    </div>
-
-                    <!-- 原始视频 Tab -->
-                    ${videoUrl ? `
-                    <div id="videoTab" class="tab-pane hidden">
-                        <div style="background: var(--bg-elevated); border-radius: 12px; overflow: hidden; border: 1px solid var(--divider);">
-                            <video src="${videoUrl}" controls style="width: 100%; max-height: 400px;" preload="metadata">
-                                您的浏览器不支持视频播放
-                            </video>
-                            <div style="padding: 12px;">
-                                <p style="font-size: 13px; color: var(--text-secondary);">原始训练视频</p>
-                            </div>
-                        </div>
+                    ${safeText(coachComment.strengths) ? `
+                    <div style="margin-bottom: 12px;">
+                        <p style="font-size: 13px; color: var(--success); font-weight: 500; margin-bottom: 6px;">优点</p>
+                        <p style="font-size: 14px; color: var(--text-secondary); line-height: 1.6;">${escapeHtml(coachComment.strengths)}</p>
                     </div>
                     ` : ''}
 
-                    <!-- 关键帧 Tab -->
-                    ${keyFrames.length > 0 ? `
-                    <div id="framesTab" class="tab-pane hidden">
-                        <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px;">
-                            ${keyFrames.map((frame, index) => {
-                                const frameUrl = normalizeFrameUrl(frame.url);
-                                return `
-                                <div style="background: var(--bg-elevated); border-radius: 12px; overflow: hidden; border: 1px solid var(--divider);">
-                                    <img src="${frameUrl}" alt="关键帧 ${index + 1}" style="width: 100%; aspect-ratio: 16/9; object-fit: cover;" onerror="this.style.display='none';this.nextElementSibling.style.display='flex';">
-                                    <div style="display:none;align-items:center;justify-content:center;padding:20px;background:var(--bg-elevated);aspect-ratio:16/9;color:var(--text-tertiary);font-size:13px;">图片加载失败</div>
-                                    <div style="padding: 12px;">
-                                        <p style="font-size: 11px; color: var(--text-tertiary); margin-bottom: 4px;">帧 #${frame.frame_number || index + 1}</p>
-                                        ${frame.description ? `<p style="font-size: 13px; color: var(--text-secondary);">${frame.description}</p>` : ''}
-                                    </div>
-                                </div>
-                            `}).join('')}
-                        </div>
+                    ${safeText(coachComment.weaknesses) ? `
+                    <div style="margin-bottom: 12px;">
+                        <p style="font-size: 13px; color: var(--warning); font-weight: 500; margin-bottom: 6px;">存在问题</p>
+                        <p style="font-size: 14px; color: var(--text-secondary); line-height: 1.6;">${escapeHtml(coachComment.weaknesses)}</p>
+                    </div>
+                    ` : ''}
+
+                    ${safeText(coachComment.summary) ? `
+                    <div>
+                        <p style="font-size: 13px; color: var(--primary); font-weight: 500; margin-bottom: 6px;">总结</p>
+                        <p style="font-size: 14px; color: var(--text-secondary); line-height: 1.6;">${escapeHtml(coachComment.summary)}</p>
                     </div>
                     ` : ''}
                 </div>
+                ` : ''}
+
+                <!-- 训练问题（3点） -->
+                ${problems.length > 0 ? `
+                <div style="margin-bottom: 24px;">
+                    <h3 style="font-size: 15px; font-weight: 600; color: var(--text-primary); margin-bottom: 12px;">训练问题（${problems.length}点）</h3>
+                    ${problems.map((problem, index) => `
+                        <div style="padding: 14px; background: var(--bg-elevated); border-radius: 12px; margin-bottom: 10px; border: 1px solid var(--divider);">
+                            <p style="font-size: 15px; font-weight: 500; color: var(--text-primary); margin-bottom: 6px;">${index + 1}. ${escapeHtml(problem.title || '问题')}</p>
+                            <p style="font-size: 13px; color: var(--text-secondary); line-height: 1.5;">${escapeHtml(problem.description || '')}</p>
+                        </div>
+                    `).join('')}
+                </div>
+                ` : ''}
+
+                <!-- 训练建议（3点） -->
+                ${suggestions.length > 0 ? `
+                <div style="margin-bottom: 24px;">
+                    <h3 style="font-size: 15px; font-weight: 600; color: var(--text-primary); margin-bottom: 12px;">训练建议（${suggestions.length}点）</h3>
+                    ${suggestions.map((suggestion, index) => `
+                        <div style="padding: 14px; background: var(--bg-elevated); border-radius: 12px; margin-bottom: 10px; border: 1px solid var(--divider);">
+                            <p style="font-size: 15px; font-weight: 500; color: var(--text-primary); margin-bottom: 6px;">${index + 1}. ${escapeHtml(suggestion.title || `训练建议 ${index + 1}`)}</p>
+                            <p style="font-size: 13px; color: var(--text-secondary); line-height: 1.6; white-space: pre-wrap;">${escapeHtml(suggestion.description || '')}</p>
+                        </div>
+                    `).join('')}
+                </div>
+                ` : ''}
 
                 <!-- 底部操作按钮 -->
                 <div style="
@@ -763,15 +860,6 @@ class App {
                 </div>
             </div>
         `;
-
-        // 绑定 Tab 切换事件
-        const tabButtons = resultContainer.querySelectorAll('.tab-btn');
-        tabButtons.forEach(btn => {
-            btn.addEventListener('click', () => {
-                const tabName = btn.dataset.tab;
-                this.switchTab(tabName);
-            });
-        });
 
         // 绑定按钮事件
         resultContainer.querySelector('#shareBtn')?.addEventListener('click', () => {
@@ -847,34 +935,73 @@ class App {
         this.taskHistory.bindTaskEvents(drawerBody);
     }
 
-    handleShare(result) {
-        // 分享功能
-        const summary = result.summary || {};
-        const overview = summary.overview || '无概要信息';
-        const score = result.overall_score || 0;
-        // 构建分享链接（优先使用任务ID构建，确保分享链接有效）
+    async handleShare(result) {
+        // 分享功能 - 使用新的数据格式
+        const coachComment = result.coach_comment || {};
+        const problems = result.problems || [];
+        const suggestions = result.suggestions || [];
+        const score = result.overall_score || result.score || 0;
+
+        // 构建分享链接
         const taskId = result.task_id;
         const shareUrl = taskId
             ? `${window.location.origin}${window.location.pathname}?task_id=${taskId}`
             : window.location.href;
 
-        const shareText = `🏓 AI 乒乓球教练分析结果
+        // 先调用分享 API 设置任务为公开分享状态
+        if (taskId) {
+            try {
+                await shareTask(taskId);
+                console.log('[分享] 任务已设置为公开分享状态');
+            } catch (error) {
+                console.error('[分享] 设置分享状态失败:', error);
+                // 即使失败也继续分享流程（可能是历史任务，已经是公开的）
+            }
+        }
 
-综合评分: ${score}分
+        // 构建分享文本（完整内容）
+        let shareText = `AI乒乓球教练分析结果\n\n综合评分: ${score}分\n\n`;
 
-${overview}
+        // 教练评语（完整内容）
+        if (coachComment.strengths) {
+            shareText += `【优点】\n${coachComment.strengths}\n\n`;
+        }
+        if (coachComment.weaknesses) {
+            shareText += `【存在问题】\n${coachComment.weaknesses}\n\n`;
+        }
+        if (coachComment.summary) {
+            shareText += `【总结】\n${coachComment.summary}\n\n`;
+        }
 
-${summary.weaknesses?.length ? '发现问题:\n' + summary.weaknesses.map((w, i) => `${i + 1}. ${typeof w === 'string' ? w : w.title}`).join('\n') : ''}
+        // 训练问题（完整内容：标题 + 描述）
+        if (problems.length > 0) {
+            shareText += `【训练问题】\n`;
+            problems.forEach((p, i) => {
+                shareText += `${i + 1}. ${p.title || '问题'}\n`;
+                if (p.description) {
+                    shareText += `   ${p.description}\n`;
+                }
+            });
+            shareText += '\n';
+        }
 
-${result.suggestions?.length ? '改进建议:\n' + result.suggestions.map((s, i) => `${i + 1}. ${s.title}`).join('\n') : ''}
+        // 训练建议（完整内容：标题 + 描述）
+        if (suggestions.length > 0) {
+            shareText += `【训练建议】\n`;
+            suggestions.forEach((s, i) => {
+                shareText += `${i + 1}. ${s.title || '建议'}\n`;
+                if (s.description) {
+                    shareText += `   ${s.description}\n`;
+                }
+            });
+            shareText += '\n';
+        }
 
-查看详细分析: ${shareUrl}
-
-—— 乒乓数字教练 v1.0`;
+        shareText += `查看详细分析: ${shareUrl}\n\n乒乓数字教练 v1.0`;
 
         copyToClipboard(shareText).then(success => {
             if (success) {
-                showToast('已复制到剪贴板', 'success');
+                showToast('已复制到剪贴板，链接可公开访问', 'success');
             } else {
                 showToast('复制失败', 'error');
             }
@@ -892,23 +1019,41 @@ ${result.suggestions?.length ? '改进建议:\n' + result.suggestions.map((s, i)
         try {
             showToast('正在生成PDF报告...', 'info');
 
-            // 构造PDF下载URL
-            const pdfUrl = `/api/results/${taskId}/pdf`;
+            // 构造PDF下载URL（注意：后端路由是 /results/{task_id}/pdf，不是 /api/results/{task_id}/pdf）
+            const pdfUrl = `${API_BASE_URL}/results/${taskId}/pdf`;
 
             // 下载PDF
-            const response = await fetch(pdfUrl);
+            const response = await fetch(pdfUrl, {
+                credentials: 'include',
+            });
 
             if (!response.ok) {
-                throw new Error(`下载失败: ${response.status} ${response.statusText}`);
+                // 尝试解析后端返回的错误消息
+                let errorMessage = `下载失败: ${response.status}`;
+                try {
+                    const errorData = await response.json();
+                    errorMessage = errorData.detail || errorMessage;
+                } catch {
+                    errorMessage = `下载失败 (${response.status})`;
+                }
+                throw new Error(errorMessage);
             }
 
-            // 获取文件名
+            // 获取文件名（优先使用 RFC 5987 编码的中文文件名 filename*）
             const contentDisposition = response.headers.get('Content-Disposition');
-            let filename = `pingpong_analysis_${taskId}.pdf`;
+            let filename = '乒乓球训练分析报告.pdf';
             if (contentDisposition) {
-                const match = contentDisposition.match(/filename="(.+)"/);
-                if (match && match[1]) {
-                    filename = match[1];
+                // 优先匹配 filename* (RFC 5987 编码)
+                const starMatch = contentDisposition.match(/filename\*=UTF-8''([^;\s]+)/);
+                if (starMatch && starMatch[1]) {
+                    // 解码 URL 编码的中文文件名
+                    filename = decodeURIComponent(starMatch[1]);
+                } else {
+                    // 降级到 filename (ASCII 文件名)
+                    const match = contentDisposition.match(/filename="([^"]+)"/);
+                    if (match && match[1]) {
+                        filename = match[1];
+                    }
                 }
             }
 
@@ -959,19 +1104,20 @@ ${result.suggestions?.length ? '改进建议:\n' + result.suggestions.map((s, i)
                 if (wechatShareManager.isSupported()) {
                     await wechatShareManager.init();
 
-                    // 构建分享标题
-                    const overallScore = result.overall_score || 0;
-                    let title = `⭐ ${overallScore}分 - 我的乒乓球技术分析报告`;
+                    // 使用新数据格式
+                    const coachComment = result.coach_comment || {};
+                    const problems = result.problems || [];
+                    const overallScore = result.overall_score || result.score || 0;
 
-                    // 构建分享描述
-                    const summary = result.summary || {};
-                    let desc = 'AI教练为您生成专业的技术分析报告';
-                    if (summary.overview) {
-                        desc = summary.overview.substring(0, 50);
-                    }
-                    const weaknesses = summary.weaknesses || [];
-                    if (weaknesses.length > 0) {
-                        desc += `\n发现${weaknesses.length}个问题需要改进`;
+                    // 构建分享标题（无表情符号）
+                    let title = `${overallScore}分 - 我的乒乓球技术分析报告`;
+
+                    // 构建分享描述（使用教练评语总结）
+                    let desc = coachComment.summary || 'AI教练为您生成专业的技术分析报告';
+
+                    // 添加问题数量信息
+                    if (problems.length > 0) {
+                        desc += `，发现${problems.length}个问题需要改进`;
                     }
 
                     // 构建分享链接
@@ -1002,6 +1148,7 @@ ${result.suggestions?.length ? '改进建议:\n' + result.suggestions.map((s, i)
         this.taskQueue?.destroy();
         this.taskHistory?.destroy();
         this.analysisResult?.destroy();
+        this.analysisStatus?.destroy();
         this.drawer?.destroy();
     }
 }

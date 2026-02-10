@@ -3,7 +3,6 @@
  * 支持拖拽上传、点击上传、视频预览
  */
 
-import { uploadVideo } from '../api/client.js';
 import { validateVideoFile, formatFileSize, getVideoDuration } from '../utils/helpers.js';
 
 export class VideoUploader {
@@ -14,10 +13,10 @@ export class VideoUploader {
         this.options = {
             accept: 'video/mp4,video/quicktime,video/x-msvideo',
             maxSize: 500 * 1024 * 1024,
-            onUploadStart: () => {},
-            onUploadProgress: () => {},
-            onUploadSuccess: () => {},
-            onUploadError: () => {},
+            onUploadStart: () => { },
+            onUploadProgress: () => { },
+            onUploadSuccess: () => { },
+            onUploadError: () => { },
             ...options,
         };
         this.file = null;
@@ -51,7 +50,7 @@ export class VideoUploader {
                             </svg>
                         </div>
                         <p style="font-size: 15px; font-weight: 500; color: var(--text-primary); margin-bottom: 4px;">点击或拖拽上传视频</p>
-                        <p style="font-size: 13px; color: var(--text-secondary);">支持 MP4、MOV 格式，最大 5 秒，最大 10MB</p>
+                        <p style="font-size: 13px; color: var(--text-secondary);">支持 MP4、MOV 格式，最大 5 秒，最大 20MB</p>
                     </div>
 
                     <!-- 预览区域（初始隐藏） -->
@@ -76,9 +75,9 @@ export class VideoUploader {
 
                 <!-- 上传进度 -->
                 <div id="uploadProgress" class="upload-progress hidden" style="margin-top: 16px;">
-                    <div style="display: flex; justify-between; font-size: 13px; color: var(--text-secondary); margin-bottom: 8px;">
-                        <span>上传中...</span>
-                        <span id="progressPercent">0%</span>
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                        <span id="progressText" style="font-size: 14px; font-weight: 500; color: var(--text-primary);">上传中...</span>
+                        <span id="progressPercent" style="font-size: 14px; font-weight: 600; color: var(--primary);">0%</span>
                     </div>
                     <div class="progress-bar">
                         <div id="progressBar" class="progress-bar-fill" style="width: 0%"></div>
@@ -139,95 +138,136 @@ export class VideoUploader {
     }
 
     async handleFileSelect(file) {
+        console.log('[handleFileSelect] 开始处理文件');
+        // 保存文件
+        this.file = file;
+
+        // 立即显示进度条（在开始校验前）
+        const progressContainer = this.container.querySelector('#uploadProgress');
+        const progressBar = this.container.querySelector('#progressBar');
+        const progressPercent = this.container.querySelector('#progressPercent');
+        const progressText = this.container.querySelector('#progressText');
+
+        if (progressContainer) {
+            progressContainer.classList.remove('hidden');
+            progressContainer.style.display = 'block';
+        }
+
         try {
-            // 先验证文件类型和大小
+            // 步骤1：验证文件类型和大小（10%）
+            if (progressText) progressText.textContent = '正在校验文件格式...';
             validateVideoFile(file);
-
-            // 获取并验证视频时长
-            const duration = await getVideoDuration(file);
-            validateVideoFile(file, duration);
-
-            this.file = file;
-            this.duration = duration;
+            if (progressBar) progressBar.style.width = '10%';
+            if (progressPercent) progressPercent.textContent = '10%';
 
             // 创建预览
             this.previewUrl = URL.createObjectURL(file);
             const videoPreview = this.container.querySelector('#videoPreview');
             videoPreview.src = this.previewUrl;
 
-            // 显示文件信息（包含时长）
+            // 切换显示
+            this.container.querySelector('#uploadPrompt').classList.add('hidden');
+            this.container.querySelector('#previewArea').classList.remove('hidden');
+
+            // 显示校验状态
             const fileInfo = this.container.querySelector('#fileInfo');
+            fileInfo.textContent = '正在校验文件...';
+
+            // 步骤2：读取并验证视频时长（30% - 可能需要较长时间）
+            if (progressText) progressText.textContent = '正在验证视频时长...';
+            if (progressBar) progressBar.style.width = '30%';
+            if (progressPercent) progressPercent.textContent = '30%';
+
+            fileInfo.textContent = '正在验证视频时长...';
+            const duration = await getVideoDuration(file);
+
+            validateVideoFile(file, duration);
+
+            // 步骤3：校验通过（50%）
+            if (progressText) progressText.textContent = '校验通过，正在上传...';
+            if (progressBar) progressBar.style.width = '50%';
+            if (progressPercent) progressPercent.textContent = '50%';
+
+            // 显示文件信息
             const durationText = duration < 60
                 ? `${duration.toFixed(1)} 秒`
                 : `${Math.floor(duration / 60)} 分 ${Math.floor(duration % 60)} 秒`;
             fileInfo.textContent = `${file.name} (${formatFileSize(file.size)}, ${durationText})`;
 
-            // 切换显示
-            this.container.querySelector('#uploadPrompt').classList.add('hidden');
-            this.container.querySelector('#previewArea').classList.remove('hidden');
-
-            // 启用主应用的分析按钮
-            const analyzeBtn = document.getElementById('analyzeBtn');
-            if (analyzeBtn) {
-                analyzeBtn.disabled = false;
-            }
-
-            showToast('视频已选择，请点击"开始分析"按钮', 'info');
+            // 步骤4：开始上传到服务器
+            if (progressText) progressText.textContent = '正在上传到服务器...';
+            await this.upload(progressBar, progressPercent, progressText);
 
         } catch (error) {
-            showToast(error.message, 'error');
+            console.error('文件处理失败:', error);
+            if (progressContainer) {
+                progressContainer.classList.add('hidden');
+                progressContainer.style.display = 'none';
+            }
+            this.reset();
+            showToast(`文件上传失败：${error.message}`, 'error');
         }
     }
 
-    async upload() {
+    async upload(progressBar, progressPercent, progressText) {
+        console.log('[upload] 开始上传，file:', !!this.file);
         if (!this.file) return;
 
-        // 显示上传进度
-        const progressContainer = this.container.querySelector('#uploadProgress');
-        const progressBar = this.container.querySelector('#progressBar');
-        const progressPercent = this.container.querySelector('#progressPercent');
-
-        if (progressContainer) {
-            progressContainer.classList.remove('hidden');
-        }
+        // 从50%开始
+        let currentProgress = 50;
 
         try {
             const { uploadVideo: apiUploadVideo } = await import('../api/client.js');
 
-            // 模拟上传进度
-            let progress = 0;
+            // 模拟上传进度（50% -> 90%）
             const progressInterval = setInterval(() => {
-                progress += 10;
-                if (progress > 90) {
+                currentProgress += 5;
+                if (currentProgress > 90) {
                     clearInterval(progressInterval);
                 }
-                if (progressBar) progressBar.style.width = `${progress}%`;
-                if (progressPercent) progressPercent.textContent = `${progress}%`;
-            }, 200);
+                if (progressBar) progressBar.style.width = `${currentProgress}%`;
+                if (progressPercent) progressPercent.textContent = `${currentProgress}%`;
+            }, 100);
 
             const result = await apiUploadVideo(this.file);
 
             clearInterval(progressInterval);
 
-            // 完成上传
+            // 完成上传（100%）
+            if (progressText) progressText.textContent = '上传完成！';
             if (progressBar) progressBar.style.width = '100%';
             if (progressPercent) progressPercent.textContent = '100%';
 
             setTimeout(() => {
-                if (progressContainer) progressContainer.classList.add('hidden');
+                const progressContainer = this.container.querySelector('#uploadProgress');
+                if (progressContainer) {
+                    progressContainer.classList.add('hidden');
+                    progressContainer.style.display = 'none';
+                }
+                // 显示成功提示
+                showToast('视频文件上传成功！', 'success');
+                // 通知父组件
                 this.options.onUploadSuccess(result);
-            }, 500);
+            }, 300);
 
         } catch (error) {
             console.error('上传失败:', error);
-            if (progressContainer) progressContainer.classList.add('hidden');
+            const progressContainer = this.container.querySelector('#uploadProgress');
+            if (progressContainer) {
+                progressContainer.classList.add('hidden');
+                progressContainer.style.display = 'none';
+            }
 
             // 重置进度条
             if (progressBar) progressBar.style.width = '0%';
             if (progressPercent) progressPercent.textContent = '0%';
 
-            // 显示错误提示
-            showToast(error.message || '上传失败', 'error');
+            // 显示详细的错误提示
+            const errorMsg = error.message || '网络连接失败，请检查后端服务是否运行';
+            showToast(`文件上传失败：${errorMsg}`, 'error');
+
+            // 重置组件状态
+            this.reset();
 
             // 重新抛出错误，让调用方处理
             throw error;

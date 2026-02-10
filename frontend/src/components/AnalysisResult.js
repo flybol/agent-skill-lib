@@ -6,35 +6,6 @@
 import { formatTime, safeJsonParse } from '../utils/helpers.js';
 import { wechatShareManager } from '../utils/wechatShare.js';
 
-/**
- * 获取 API 基础 URL（与 client.js 保持一致）
- */
-function getApiBaseUrl() {
-    if (import.meta.env.VITE_API_URL) {
-        return import.meta.env.VITE_API_URL;
-    }
-    const host = window.location.hostname;
-    const protocol = window.location.protocol;
-    return `${protocol}//${host}:8000`;
-}
-
-/**
- * 处理关键帧图片 URL
- * 如果是相对路径，使用 API 基础 URL 构建完整 URL
- */
-function normalizeFrameUrl(url) {
-    if (!url) return url;
-    // 如果已经是完整 URL，直接返回
-    if (url.startsWith('http://') || url.startsWith('https://')) {
-        return url;
-    }
-    // 如果是相对路径，构建完整 URL
-    const apiBaseUrl = getApiBaseUrl();
-    // 确保相对路径以 / 开头
-    const normalizedPath = url.startsWith('/') ? url : `/${url}`;
-    return `${apiBaseUrl}${normalizedPath}`;
-}
-
 export class AnalysisResult {
     constructor(container, options = {}) {
         this.container = typeof container === 'string'
@@ -80,9 +51,6 @@ export class AnalysisResult {
                             <button class="tab-btn active px-6 py-4 text-sm font-medium text-blue-600 border-b-2 border-blue-600" data-tab="summary">
                                 概览
                             </button>
-                            <button class="tab-btn px-6 py-4 text-sm font-medium text-gray-500 hover:text-gray-700" data-tab="frames">
-                                关键帧
-                            </button>
                             <button class="tab-btn px-6 py-4 text-sm font-medium text-gray-500 hover:text-gray-700" data-tab="details">
                                 详细分析
                             </button>
@@ -95,7 +63,6 @@ export class AnalysisResult {
                     <!-- Tab 内容 -->
                     <div class="tab-content p-6">
                         <div id="summaryTab" class="tab-pane"></div>
-                        <div id="framesTab" class="tab-pane hidden"></div>
                         <div id="detailsTab" class="tab-pane hidden"></div>
                         <div id="suggestionsTab" class="tab-pane hidden"></div>
                     </div>
@@ -175,8 +142,8 @@ export class AnalysisResult {
             // 显示加载提示
             const loadingToast = this.showLoadingToast('正在生成PDF报告...');
 
-            // 构造PDF下载URL
-            const pdfUrl = `/api/results/${taskId}/pdf`;
+            // 构造PDF下载URL（注意：后端路由是 /results/{task_id}/pdf，不是 /api/results/{task_id}/pdf）
+            const pdfUrl = `/results/${taskId}/pdf`;
 
             // 下载PDF
             const response = await fetch(pdfUrl);
@@ -187,13 +154,21 @@ export class AnalysisResult {
                 throw new Error(`下载失败: ${response.status} ${response.statusText}`);
             }
 
-            // 获取文件名
+            // 获取文件名（优先使用 RFC 5987 编码的中文文件名 filename*）
             const contentDisposition = response.headers.get('Content-Disposition');
-            let filename = `乒乓分析报告_${taskId}.pdf`;
+            let filename = '乒乓球训练分析报告.pdf';
             if (contentDisposition) {
-                const match = contentDisposition.match(/filename="(.+)"/);
-                if (match && match[1]) {
-                    filename = match[1];
+                // 优先匹配 filename* (RFC 5987 编码)
+                const starMatch = contentDisposition.match(/filename\*=UTF-8''([^;\s]+)/);
+                if (starMatch && starMatch[1]) {
+                    // 解码 URL 编码的中文文件名
+                    filename = decodeURIComponent(starMatch[1]);
+                } else {
+                    // 降级到 filename (ASCII 文件名)
+                    const match = contentDisposition.match(/filename="([^"]+)"/);
+                    if (match && match[1]) {
+                        filename = match[1];
+                    }
                 }
             }
 
@@ -808,6 +783,12 @@ export class AnalysisResult {
         this.container.querySelector('#loadingState')?.classList.add('hidden');
         this.container.querySelector('#emptyState')?.classList.add('hidden');
 
+        // 隐藏进度显示
+        const progressContainer = this.container.querySelector('#progressContainer');
+        if (progressContainer) {
+            progressContainer.classList.add('hidden');
+        }
+
         // 显示结果
         const header = this.container.querySelector('#resultHeader');
         const content = this.container.querySelector('#resultContent');
@@ -817,7 +798,6 @@ export class AnalysisResult {
         // 填充数据
         this.renderHeader(result);
         this.renderSummary(result);
-        this.renderFrames(result);
         this.renderDetails(result);
         this.renderSuggestions(result);
 
@@ -1004,35 +984,6 @@ export class AnalysisResult {
         });
     }
 
-    renderFrames(result) {
-        const container = this.container.querySelector('#framesTab');
-        if (!container) return;
-
-        const keyFrames = result.key_frames || [];
-
-        if (keyFrames.length === 0) {
-            container.innerHTML = `
-                <div class="text-center py-8">
-                    <p class="text-gray-400 text-sm">暂无关键帧</p>
-                </div>
-            `;
-            return;
-        }
-
-        container.innerHTML = `
-            <div class="grid grid-cols-2 gap-4">
-                ${keyFrames.map((frame, index) => `
-                    <div class="bg-gray-50 rounded-xl overflow-hidden">
-                        <img src="${normalizeFrameUrl(frame.url)}" alt="关键帧 ${index + 1}" class="w-full aspect-video object-cover" onerror="this.src='data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%22320%22 height=%22180%22%3E%3Crect fill=%22%23f3f4f6%22 width=%22320%22 height=%22180%22/%3E%3Ctext fill=%22%239ca3af%22 font-family=%22sans-serif%22 font-size=%2214%22 x=%2250%25%22 y=%2250%25%22 dominant-baseline=%22middle%22 text-anchor=%22middle%22%3E图片加载失败%3C/text%3E%3C/svg%3E'">
-                        <div class="p-3">
-                            <p class="text-xs text-gray-500 mb-1">帧 #${frame.frame_number || index + 1}</p>
-                            ${frame.description ? `<p class="text-sm text-gray-700">${frame.description}</p>` : ''}
-                        </div>
-                    </div>
-                `).join('')}
-            </div>
-        `;
-    }
 
     renderDetails(result) {
         const container = this.container.querySelector('#detailsTab');
@@ -1157,18 +1108,165 @@ export class AnalysisResult {
         });
     }
 
+    /**
+     * 显示分析进度
+     * @param {Object} progressData - 包含 status, stage, progress 的进度数据
+     */
+    showProgress(progressData = {}) {
+        const { status = 'processing', stage = '', progress = 0 } = progressData;
+
+        // 隐藏其他状态
+        this.container.querySelector('#loadingState')?.classList.add('hidden');
+        this.container.querySelector('#emptyState')?.classList.add('hidden');
+        this.container.querySelector('#resultHeader')?.classList.add('hidden');
+        this.container.querySelector('#resultContent')?.classList.add('hidden');
+
+        // 创建或更新进度显示
+        let progressContainer = this.container.querySelector('#progressContainer');
+        if (!progressContainer) {
+            // 在容器中插入进度显示区域
+            const tempDiv = document.createElement('div');
+            tempDiv.id = 'progressContainer';
+            this.container.insertBefore(tempDiv, this.container.firstChild);
+            progressContainer = tempDiv;
+        }
+
+        // 状态映射
+        const statusMap = {
+            'pending': '等待开始',
+            'queued': '排队中',
+            'processing': '处理中',
+            'extracting': '视频抽帧中',
+            'computing': '计算特征中',
+            'analyzing': 'AI 分析中',
+            'assembling_report': '生成报告中',
+            'completed': '分析完成',
+            'failed': '分析失败'
+        };
+
+        const statusText = statusMap[status] || status || '处理中';
+        const progressPercent = Math.min(100, Math.max(0, progress));
+
+        progressContainer.innerHTML = `
+            <div class="progress-display bg-white rounded-2xl p-8 text-center">
+                <!-- 加载动画 -->
+                <div class="inline-block relative mb-6">
+                    <div class="w-16 h-16 border-4 border-blue-100 border-t-blue-600 rounded-full animate-spin"></div>
+                    ${status === 'analyzing' ? `
+                        <div class="absolute inset-0 flex items-center justify-center">
+                            <div class="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center">
+                                <svg class="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/>
+                                </svg>
+                            </div>
+                        </div>
+                    ` : ''}
+                </div>
+
+                <!-- 状态标题 -->
+                <h3 id="progressStatus" class="text-xl font-bold text-gray-800 mb-2">${statusText}</h3>
+
+                <!-- 当前阶段 -->
+                ${stage ? `<p id="progressStage" class="text-sm text-gray-500 mb-6">${stage}</p>` : ''}
+
+                <!-- 进度条 -->
+                <div class="max-w-xs mx-auto">
+                    <div class="flex justify-between items-center mb-2">
+                        <span class="text-xs text-gray-400">分析进度</span>
+                        <span id="progressPercent" class="text-sm font-bold text-blue-600">${progressPercent}%</span>
+                    </div>
+                    <div class="h-2 bg-gray-100 rounded-full overflow-hidden">
+                        <div id="progressBar" class="h-full bg-gradient-to-r from-blue-500 to-blue-600 rounded-full transition-all duration-300" style="width: ${progressPercent}%"></div>
+                    </div>
+                </div>
+
+                <!-- 提示信息 -->
+                ${status === 'analyzing' ? `
+                    <p class="text-xs text-gray-400 mt-4">AI 正在分析您的动作，请稍候...</p>
+                ` : ''}
+            </div>
+        `;
+
+        progressContainer.classList.remove('hidden');
+    }
+
+    /**
+     * 更新进度数据
+     * @param {Object} progressData - 包含 status, stage, progress 的进度数据
+     */
+    updateProgress(progressData = {}) {
+        const progressContainer = this.container.querySelector('#progressContainer');
+        if (!progressContainer) {
+            this.showProgress(progressData);
+            return;
+        }
+
+        const { status, stage, progress } = progressData;
+
+        // 更新状态文本
+        if (status) {
+            const statusMap = {
+                'pending': '等待开始',
+                'queued': '排队中',
+                'processing': '处理中',
+                'extracting': '视频抽帧中',
+                'computing': '计算特征中',
+                'analyzing': 'AI 分析中',
+                'assembling_report': '生成报告中',
+                'completed': '分析完成',
+                'failed': '分析失败'
+            };
+            const statusEl = progressContainer.querySelector('#progressStatus');
+            if (statusEl) {
+                statusEl.textContent = statusMap[status] || status;
+            }
+        }
+
+        // 更新阶段
+        if (stage) {
+            const stageEl = progressContainer.querySelector('#progressStage');
+            if (stageEl) {
+                stageEl.textContent = stage;
+            }
+        }
+
+        // 更新进度条
+        if (progress !== undefined) {
+            const progressPercent = Math.min(100, Math.max(0, progress));
+            const percentEl = progressContainer.querySelector('#progressPercent');
+            const barEl = progressContainer.querySelector('#progressBar');
+            if (percentEl) percentEl.textContent = `${progressPercent}%`;
+            if (barEl) barEl.style.width = `${progressPercent}%`;
+        }
+    }
+
     showLoading() {
         this.container.querySelector('#loadingState')?.classList.remove('hidden');
         this.container.querySelector('#emptyState')?.classList.add('hidden');
         this.container.querySelector('#resultHeader')?.classList.add('hidden');
         this.container.querySelector('#resultContent')?.classList.add('hidden');
+
+        // 隐藏进度显示
+        const progressContainer = this.container.querySelector('#progressContainer');
+        if (progressContainer) {
+            progressContainer.classList.add('hidden');
+        }
     }
 
     showEmpty() {
+        // 清除结果数据（防止分享旧结果）
+        this.result = null;
+
         this.container.querySelector('#loadingState')?.classList.add('hidden');
         this.container.querySelector('#emptyState')?.classList.remove('hidden');
         this.container.querySelector('#resultHeader')?.classList.add('hidden');
         this.container.querySelector('#resultContent')?.classList.add('hidden');
+
+        // 隐藏进度显示
+        const progressContainer = this.container.querySelector('#progressContainer');
+        if (progressContainer) {
+            progressContainer.classList.add('hidden');
+        }
     }
 
     destroy() {

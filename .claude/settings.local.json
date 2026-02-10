@@ -7,7 +7,12 @@
       "mcp__zai-mcp-server__ui_to_artifact",
       "Bash(git ls-tree:*)",
       "Bash(strings:*)",
-      "Bash(grep:*)"
+      "Bash(grep:*)",
+      "Bash(npm install:*)",
+      "Bash(npx:*)",
+      "Bash(timeout:*)",
+      "Bash(curl:*)",
+      "Bash(ping:*)"
     ]
   }
 }

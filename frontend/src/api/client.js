@@ -30,6 +30,7 @@ async function apiRequest(endpoint, options = {}) {
     console.log('API Request:', url, options);
 
     const defaultOptions = {
+        credentials: 'include', // 发送 cookie
         headers: {
             'Content-Type': 'application/json',
         },
@@ -45,7 +46,17 @@ async function apiRequest(endpoint, options = {}) {
         console.log('API Response data:', data);
 
         if (!response.ok) {
-            throw new Error(data.message || '请求失败');
+            // 422 错误的详细日志
+            if (response.status === 422) {
+                console.error('[422 ERROR] 请求体验证失败:', {
+                    url,
+                    method: config.method,
+                    body: config.body,
+                    responseData: data,
+                    detail: data.detail || data.message || '未知错误'
+                });
+            }
+            throw new Error(data.message || data.detail || '请求失败');
         }
 
         return data;
@@ -75,6 +86,7 @@ export async function uploadVideo(file, onProgress) {
             method: 'POST',
             body: formData,
             signal: controller.signal,
+            credentials: 'include',
         });
 
         clearTimeout(timeoutId);
@@ -124,15 +136,33 @@ export async function uploadVideo(file, onProgress) {
 /**
  * 开始分析 API
  * @param {string} taskId - 任务ID
- * @param {string} targetPlayer - 目标球员选择 ('left' | 'right' | 'single_player')
+ * @param {string} targetPlayer - 目标球员选择 ('single_player' | 'left' | 'right' | 'front' | 'back')
  */
 export async function startAnalysis(taskId, targetPlayer) {
+    // 映射前端的 front/back 到后端的 single_player
+    // 如果用户直接选择 single_player，则保持原值
+    const mappedPlayer = (targetPlayer === 'front' || targetPlayer === 'back')
+        ? 'single_player'
+        : targetPlayer;
+
+    // 场景类型：双人对练（front/back）或单人训练
+    const sceneType = (targetPlayer === 'front' || targetPlayer === 'back')
+        ? 'dual_practice'
+        : 'single';
+
+    const payload = {
+        task_id: taskId,
+        target_player: mappedPlayer,
+        scene_type: sceneType
+    };
+
+    console.log('[DEBUG] 开始分析 API 调用:', payload);
+    console.log('[DEBUG] taskId:', taskId, 'typeof:', typeof taskId, 'isEmpty:', !taskId);
+    console.log('[DEBUG] targetPlayer:', targetPlayer, 'mappedPlayer:', mappedPlayer, 'sceneType:', sceneType);
+
     return apiRequest('/api/analyze', {
         method: 'POST',
-        body: JSON.stringify({
-            task_id: taskId,
-            target_player: targetPlayer
-        }),
+        body: JSON.stringify(payload),
     });
 }
 
@@ -188,6 +218,16 @@ export async function deleteTask(taskId) {
 }
 
 /**
+ * 设置任务为公开分享状态 API
+ * @param {string} taskId - 任务 ID
+ */
+export async function shareTask(taskId) {
+    return apiRequest(`/api/tasks/${taskId}/share`, {
+        method: 'POST',
+    });
+}
+
+/**
  * WebSocket 连接 - 实时接收任务状态更新
  */
 export function connectTaskWebSocket(taskId, onMessage, onError) {
@@ -232,22 +272,7 @@ export function connectTaskWebSocket(taskId, onMessage, onError) {
     return ws;
 }
 
-/**
- * 处理关键帧图片 URL
- * 如果是相对路径，使用 API 基础 URL 构建完整 URL
- */
-export function normalizeFrameUrl(url) {
-    if (!url) return url;
-    // 如果已经是完整 URL，直接返回
-    if (url.startsWith('http://') || url.startsWith('https://')) {
-        return url;
-    }
-    // 如果是相对路径，构建完整 URL
-    const apiBaseUrl = getApiBaseUrl();
-    // 确保相对路径以 / 开头
-    const normalizedPath = url.startsWith('/') ? url : `/${url}`;
-    return `${apiBaseUrl}${normalizedPath}`;
-}
+export { API_BASE_URL, getApiBaseUrl };
 
 export default {
     uploadVideo,
@@ -259,5 +284,4 @@ export default {
     refreshTaskStatus,
     deleteTask,
     connectTaskWebSocket,
-    normalizeFrameUrl,
 };

@@ -77,7 +77,7 @@ export class DarkCoachPage {
                         <!-- 模块标题 -->
                         <div style="margin-bottom: 16px;">
                             <h2 class="text-heading" style="margin-bottom: 4px;">上传训练视频</h2>
-                            <p class="text-caption">选择 1~3 秒内的乒乓球训练视频（最大 10MB）</p>
+                            <p class="text-caption">支持 MP4、MOV 格式，最大 5.5 秒，最大 20MB</p>
                         </div>
 
                         <!-- 上传区域 -->
