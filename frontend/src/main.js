@@ -435,9 +435,7 @@ class App {
                 }
 
                 // 恢复历史任务的视频
-                const host = window.location.hostname;
-                const protocol = window.location.protocol;
-                const videoUrl = `${protocol}//${host}:8000/videos/${taskId}`;
+                const videoUrl = `${API_BASE_URL}/videos/${taskId}`;
                 const fileName = result.name || `训练视频_${taskId}`;
                 this.videoUploader.setVideoByUrl(videoUrl, fileName);
 
@@ -689,9 +687,7 @@ class App {
                 }
 
                 // 显示历史任务的视频
-                const host = window.location.hostname;
-                const protocol = window.location.protocol;
-                const videoUrl = `${protocol}//${host}:8000/videos/${taskId}`;
+                const videoUrl = `${API_BASE_URL}/videos/${taskId}`;
                 const fileName = result.name || `训练视频_${taskId}`;
                 this.videoUploader.setVideoByUrl(videoUrl, fileName);
 
