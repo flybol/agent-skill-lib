@@ -106,7 +106,9 @@ def find_task_globally(task_id: str) -> Optional[dict]:
                             "task_id": task_id,
                             "name": result.get("name", f"训练视频_{task_id}"),
                             "status": "completed",
-                            "created_at": result.get("created_at", datetime.now().isoformat()),
+                            "created_at": result.get(
+                                "created_at", datetime.now().isoformat()
+                            ),
                             "is_public": result.get("is_public", False),  # 默认私有
                         }
                     except Exception as e:
@@ -288,7 +290,9 @@ class TaskManager:
 
         return task_id
 
-    def create_task_with_id(self, task_id: str, name: str, video_path: str, user_id: str = None):
+    def create_task_with_id(
+        self, task_id: str, name: str, video_path: str, user_id: str = None
+    ):
         """使用指定的 ID 创建新任务
 
         Args:
@@ -702,26 +706,33 @@ async def simulate_analysis(task_id: str, user_id: str = None):
             if isinstance(p, dict):
                 # 新格式：直接使用 title + description
                 if "description" in p:
-                    formatted_problems.append({
-                        "title": p.get("title", ""),
-                        "description": p.get("description", "")
-                    })
+                    formatted_problems.append(
+                        {
+                            "title": p.get("title", ""),
+                            "description": p.get("description", ""),
+                        }
+                    )
                 else:
                     # 旧格式：title + evidence + impact
-                    formatted_problems.append({
-                        "title": p.get("title", ""),
-                        "description": f"依据：{p.get('evidence', '')}\n影响：{p.get('impact', '')}"
-                    })
+                    formatted_problems.append(
+                        {
+                            "title": p.get("title", ""),
+                            "description": f"依据：{p.get('evidence', '')}\n影响：{p.get('impact', '')}",
+                        }
+                    )
 
         # 转换 suggestions 格式（从 improvements 到 suggestions）
         formatted_suggestions = []
         for imp in llm_improvements[:3]:
             if isinstance(imp, dict):
-                formatted_suggestions.append({
-                    "title": imp.get("title", "训练建议"),
-                    "description": "训练方法：\n" + "\n".join(imp.get("drills", [])),
-                    "priority": "medium",
-                })
+                formatted_suggestions.append(
+                    {
+                        "title": imp.get("title", "训练建议"),
+                        "description": "训练方法：\n"
+                        + "\n".join(imp.get("drills", [])),
+                        "priority": "medium",
+                    }
+                )
 
         result = {
             "task_id": task_id,
@@ -732,7 +743,9 @@ async def simulate_analysis(task_id: str, user_id: str = None):
             "coach_comment": llm_coach_comment,
             "problems": formatted_problems[:3],
             "suggestions": formatted_suggestions,
-            "overall_score": llm_score if llm_score is not None else max(40, 80 - len(llm_problems) * 5),
+            "overall_score": llm_score
+            if llm_score is not None
+            else max(40, 80 - len(llm_problems) * 5),
             "details": {
                 "technique": {
                     "分段数量": features_data.get("segment_count", 0),
@@ -991,10 +1004,7 @@ async def upload_video(
 
 
 @app.get("/api/preprocess/{task_id}")
-async def preprocess_video(
-    task_id: str,
-    request: Request
-):
+async def preprocess_video(task_id: str, request: Request):
     """
     预处理视频：检测目标运动员
 
@@ -1056,10 +1066,7 @@ async def preprocess_video(
 
 
 @app.post("/api/analyze", response_model=AnalysisResponse)
-async def start_analysis(
-    request_data: AnalysisRequest,
-    http_request: Request
-):
+async def start_analysis(request_data: AnalysisRequest, http_request: Request):
     """
     开始分析任务
 
@@ -1069,7 +1076,9 @@ async def start_analysis(
     # 获取用户标识
     user_id = get_user_id_from_cookie(http_request)
 
-    logger.info(f"[API] 收到分析请求: task_id={request_data.task_id}, user_id={user_id}")
+    logger.info(
+        f"[API] 收到分析请求: task_id={request_data.task_id}, user_id={user_id}"
+    )
     logger.info(f"[API] 目标球员参数: target_player={request_data.target_player}")
 
     task = task_manager.get_task(request_data.task_id)
@@ -1165,7 +1174,10 @@ async def start_analysis(
 
         # AI 分析阶段
         task_manager.update_task(
-            request_data.task_id, status="analyzing", progress=60, stage="AI 正在分析动作..."
+            request_data.task_id,
+            status="analyzing",
+            progress=60,
+            stage="AI 正在分析动作...",
         )
         # 让事件循环有机会处理 WebSocket 发送
         await asyncio.sleep(0.01)
@@ -1236,20 +1248,34 @@ async def start_analysis(
         # 训练建议：确保至少有3个建议
         if not llm_suggestions or len(llm_suggestions) == 0:
             llm_suggestions = [
-                {"title": "加强基本动作", "description": "训练方法：\n多球练习\n空挥练习", "priority": "high"},
-                {"title": "提升击球稳定性", "description": "训练方法：\n定点训练\n节奏控制", "priority": "medium"},
-                {"title": "改善还原速度", "description": "训练方法：\n快速还原\n步法训练", "priority": "medium"},
+                {
+                    "title": "加强基本动作",
+                    "description": "训练方法：\n多球练习\n空挥练习",
+                    "priority": "high",
+                },
+                {
+                    "title": "提升击球稳定性",
+                    "description": "训练方法：\n定点训练\n节奏控制",
+                    "priority": "medium",
+                },
+                {
+                    "title": "改善还原速度",
+                    "description": "训练方法：\n快速还原\n步法训练",
+                    "priority": "medium",
+                },
             ]
 
         # 规范化 suggestions 格式
         formatted_suggestions = []
         for s in llm_suggestions[:3]:  # 最多取3个
             if isinstance(s, dict):
-                formatted_suggestions.append({
-                    "title": s.get("title", "训练建议"),
-                    "description": s.get("description", ""),
-                    "priority": s.get("priority", "medium"),
-                })
+                formatted_suggestions.append(
+                    {
+                        "title": s.get("title", "训练建议"),
+                        "description": s.get("description", ""),
+                        "priority": s.get("priority", "medium"),
+                    }
+                )
 
         result = {
             "task_id": request_data.task_id,
@@ -1274,7 +1300,11 @@ async def start_analysis(
 
         # 更新任务为完成状态
         task_manager.update_task(
-            request_data.task_id, status="completed", progress=100, stage=None, result=result
+            request_data.task_id,
+            status="completed",
+            progress=100,
+            stage=None,
+            result=result,
         )
 
         return AnalysisResponse(
@@ -1323,9 +1353,21 @@ def _ensure_new_format(data: dict, task_id: str = None) -> dict:
         analysis_suggestions = analysis.get("suggestions", [])
         if not analysis_suggestions or len(analysis_suggestions) == 0:
             analysis_suggestions = [
-                {"title": "加强基本动作", "description": "训练方法：\n多球练习\n空挥练习", "priority": "high"},
-                {"title": "提升击球稳定性", "description": "训练方法：\n定点训练\n节奏控制", "priority": "medium"},
-                {"title": "改善还原速度", "description": "训练方法：\n快速还原\n步法训练", "priority": "medium"},
+                {
+                    "title": "加强基本动作",
+                    "description": "训练方法：\n多球练习\n空挥练习",
+                    "priority": "high",
+                },
+                {
+                    "title": "提升击球稳定性",
+                    "description": "训练方法：\n定点训练\n节奏控制",
+                    "priority": "medium",
+                },
+                {
+                    "title": "改善还原速度",
+                    "description": "训练方法：\n快速还原\n步法训练",
+                    "priority": "medium",
+                },
             ]
 
         # 格式化suggestions
@@ -1385,9 +1427,21 @@ def _ensure_new_format(data: dict, task_id: str = None) -> dict:
             ]
         if not data.get("suggestions") or len(data.get("suggestions", [])) == 0:
             data["suggestions"] = [
-                {"title": "加强基本动作", "description": "训练方法：\n多球练习\n空挥练习", "priority": "high"},
-                {"title": "提升击球稳定性", "description": "训练方法：\n定点训练\n节奏控制", "priority": "medium"},
-                {"title": "改善还原速度", "description": "训练方法：\n快速还原\n步法训练", "priority": "medium"},
+                {
+                    "title": "加强基本动作",
+                    "description": "训练方法：\n多球练习\n空挥练习",
+                    "priority": "high",
+                },
+                {
+                    "title": "提升击球稳定性",
+                    "description": "训练方法：\n定点训练\n节奏控制",
+                    "priority": "medium",
+                },
+                {
+                    "title": "改善还原速度",
+                    "description": "训练方法：\n快速还原\n步法训练",
+                    "priority": "medium",
+                },
             ]
         if "overall_score" not in data or data["overall_score"] is None:
             data["overall_score"] = 70
@@ -1480,10 +1534,7 @@ def _ensure_new_format(data: dict, task_id: str = None) -> dict:
 
 
 @app.get("/api/results/{task_id}", response_model=AnalysisResult)
-async def get_analysis_result(
-    task_id: str,
-    request: Request
-):
+async def get_analysis_result(task_id: str, request: Request):
     """
     获取分析结果
 
@@ -1508,7 +1559,9 @@ async def get_analysis_result(
     is_public = task.get("is_public", False)
 
     if not is_public and task_user_id and task_user_id != user_id:
-        logger.warning(f"[分析结果] 权限拒绝: user_id={user_id} 尝试访问 task_user_id={task_user_id} 的私有任务")
+        logger.warning(
+            f"[分析结果] 权限拒绝: user_id={user_id} 尝试访问 task_user_id={task_user_id} 的私有任务"
+        )
         raise HTTPException(status_code=403, detail="无权访问此任务")
 
     result = task.get("result")
@@ -1549,7 +1602,8 @@ async def get_history_tasks(
 
     # 首先尝试从内存获取（仅获取当前用户的任务）
     tasks_list = [
-        t for t in task_manager.tasks.values()
+        t
+        for t in task_manager.tasks.values()
         if t.get("user_id") == user_id or t.get("user_id") is None
     ]
 
@@ -1600,8 +1654,7 @@ async def get_history_tasks(
 
             # 重新获取任务列表
             tasks_list = [
-                t for t in task_manager.tasks.values()
-                if t.get("user_id") == user_id
+                t for t in task_manager.tasks.values() if t.get("user_id") == user_id
             ]
 
     # 过滤状态
@@ -1663,10 +1716,7 @@ async def get_task_status(task_id: str):
 
 
 @app.post("/api/tasks/{task_id}/share")
-async def share_task(
-    task_id: str,
-    request: Request
-):
+async def share_task(task_id: str, request: Request):
     """
     设置任务为公开分享状态
 
@@ -1689,7 +1739,9 @@ async def share_task(
     # 验证任务所有权：只有创建者可以设置分享
     task_user_id = task.get("user_id")
     if task_user_id and task_user_id != user_id:
-        logger.warning(f"[分享任务] 权限拒绝: user_id={user_id} 尝试分享 task_user_id={task_user_id} 的任务")
+        logger.warning(
+            f"[分享任务] 权限拒绝: user_id={user_id} 尝试分享 task_user_id={task_user_id} 的任务"
+        )
         raise HTTPException(status_code=403, detail="只有任务创建者才能设置分享状态")
 
     # 获取任务所属用户的目录
@@ -1719,15 +1771,12 @@ async def share_task(
         "success": True,
         "message": "任务已设置为公开分享",
         "task_id": task_id,
-        "is_public": True
+        "is_public": True,
     }
 
 
 @app.delete("/api/tasks/{task_id}")
-async def delete_task(
-    task_id: str,
-    request: Request
-):
+async def delete_task(task_id: str, request: Request):
     """
     删除任务
 
@@ -1747,7 +1796,9 @@ async def delete_task(
     # 验证任务所有权
     task_user_id = task.get("user_id")
     if task_user_id and task_user_id != user_id:
-        logger.warning(f"[删除任务] 权限拒绝: user_id={user_id} 尝试删除 task_user_id={task_user_id} 的任务")
+        logger.warning(
+            f"[删除任务] 权限拒绝: user_id={user_id} 尝试删除 task_user_id={task_user_id} 的任务"
+        )
         raise HTTPException(status_code=403, detail="无权删除此任务")
 
     # 使用任务所属用户的目录删除
@@ -1756,6 +1807,7 @@ async def delete_task(
     task_dir = user_run_dir / task_id
     if task_dir.exists():
         import shutil
+
         shutil.rmtree(task_dir)
 
     # 从内存中删除
@@ -1768,11 +1820,7 @@ async def delete_task(
 
 
 @app.get("/frames/{task_id}/{frame_name}")
-async def get_frame_image(
-    task_id: str,
-    frame_name: str,
-    request: Request
-):
+async def get_frame_image(task_id: str, frame_name: str, request: Request):
     """
     获取关键帧图片
 
@@ -1797,13 +1845,22 @@ async def get_frame_image(
     is_public = task.get("is_public", False)
 
     if not is_public and task_user_id and task_user_id != user_id:
-        logger.warning(f"[关键帧图片] 权限拒绝: user_id={user_id} 尝试访问 task_user_id={task_user_id} 的私有任务")
+        logger.warning(
+            f"[关键帧图片] 权限拒绝: user_id={user_id} 尝试访问 task_user_id={task_user_id} 的私有任务"
+        )
         raise HTTPException(status_code=403, detail="无权访问此任务")
 
     # 使用任务所属用户的目录获取关键帧图片
     task_user_id = task_user_id or user_id
     user_run_dir = get_user_run_dir(task_user_id)
     frame_path = user_run_dir / task_id / "frames" / frame_name
+
+    # 兼容旧任务：如果用户隔离目录找不到，尝试旧目录结构 data/runs/task_id/frames/
+    if not frame_path.exists():
+        legacy_frames_dir = RUNS_DIR / task_id / "frames"
+        legacy_frame_path = legacy_frames_dir / frame_name
+        if legacy_frame_path.exists():
+            frame_path = legacy_frame_path
 
     if not frame_path.exists():
         # 提供详细的调试信息
@@ -1814,11 +1871,20 @@ async def get_frame_image(
                 [f.name for f in frames_dir.iterdir() if f.is_file()]
             )
 
+        # 尝试检查旧目录
+        legacy_frames_dir = RUNS_DIR / task_id / "frames"
+        if legacy_frames_dir.exists():
+            legacy_frames = sorted(
+                [f.name for f in legacy_frames_dir.iterdir() if f.is_file()]
+            )
+            if legacy_frames:
+                available_frames.extend(legacy_frames)
+
         error_detail = f"关键帧图片不存在: {frame_name}"
         if available_frames:
             error_detail += f"\n可用的帧文件: {', '.join(available_frames[:10])}"
         else:
-            error_detail += f"\n帧目录不存在或为空: {frames_dir}"
+            error_detail += "\n帧目录不存在或为空"
 
         raise HTTPException(status_code=404, detail=error_detail)
 
@@ -1846,10 +1912,7 @@ async def get_wechat_jsdk_config(url: str):
 
 
 @app.get("/results/{task_id}/pdf")
-async def download_pdf_report(
-    task_id: str,
-    request: Request
-):
+async def download_pdf_report(task_id: str, request: Request):
     """
     下载 PDF 报告
 
@@ -1872,11 +1935,10 @@ async def download_pdf_report(
     is_public = task.get("is_public", False)
 
     if not is_public and task_user_id and task_user_id != user_id:
-        logger.warning(f"[PDF 下载] 权限拒绝: user_id={user_id} 尝试下载 task_user_id={task_user_id} 的私有任务")
-        raise HTTPException(
-            status_code=403,
-            detail="只有任务创建者才能下载 PDF 报告"
+        logger.warning(
+            f"[PDF 下载] 权限拒绝: user_id={user_id} 尝试下载 task_user_id={task_user_id} 的私有任务"
         )
+        raise HTTPException(status_code=403, detail="只有任务创建者才能下载 PDF 报告")
 
     # 获取任务结果
     result = task.get("result")
@@ -1892,16 +1954,20 @@ async def download_pdf_report(
     logger.info(f"[PDF 下载] task_user_id={task_user_id}, task_run_dir={task_run_dir}")
 
     try:
-        logger.info(f"[PDF 下载] 开始生成 PDF: task_id={task_id}, task_run_dir={task_run_dir}")
+        logger.info(
+            f"[PDF 下载] 开始生成 PDF: task_id={task_id}, task_run_dir={task_run_dir}"
+        )
         pdf_data = generate_pdf_report(result, task_run_dir)
-        logger.info(f"[PDF 下载] PDF 生成成功: task_id={task_id}, size={len(pdf_data)} bytes")
+        logger.info(
+            f"[PDF 下载] PDF 生成成功: task_id={task_id}, size={len(pdf_data)} bytes"
+        )
 
         # 文件名：使用 ASCII 文件名 + RFC 5987 编码的中文文件名
         # 确保跨浏览器兼容性
         filename_zh = "乒乓球训练分析报告.pdf"
         filename_ascii = "pingpong_training_analysis_report.pdf"
         # 使用 RFC 5987 标准编码中文文件名
-        filename_encoded = quote(filename_zh, safe='')
+        filename_encoded = quote(filename_zh, safe="")
 
         # 返回 PDF 文件（使用 Response 直接返回 bytes）
         return Response(
@@ -1915,16 +1981,14 @@ async def download_pdf_report(
 
     except Exception as e:
         import traceback
+
         logger.error(f"[PDF 下载] 生成 PDF 失败: task_id={task_id}, error={e}")
         logger.error(f"[PDF 下载] 错误堆栈:\n{traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=f"生成 PDF 失败: {str(e)}")
 
 
 @app.get("/videos/{task_id}")
-async def get_task_video(
-    task_id: str,
-    request: Request
-):
+async def get_task_video(task_id: str, request: Request):
     """
     获取任务的原始视频
 
@@ -1948,7 +2012,9 @@ async def get_task_video(
     is_public = task.get("is_public", False)
 
     if not is_public and task_user_id and task_user_id != user_id:
-        logger.warning(f"[视频访问] 权限拒绝: user_id={user_id} 尝试访问 task_user_id={task_user_id} 的私有任务")
+        logger.warning(
+            f"[视频访问] 权限拒绝: user_id={user_id} 尝试访问 task_user_id={task_user_id} 的私有任务"
+        )
         raise HTTPException(status_code=403, detail="无权访问此任务")
 
     # 使用任务所属用户的目录获取视频文件
@@ -1970,6 +2036,19 @@ async def get_task_video(
             if file.is_file() and file.suffix.lower() in video_extensions:
                 video_path = file
                 break
+
+    # 兼容旧任务：如果用户隔离目录找不到，尝试旧目录结构 data/runs/task_id/
+    if not video_path:
+        legacy_task_dir = RUNS_DIR / task_id
+        if legacy_task_dir.exists():
+            input_video = legacy_task_dir / "input.mp4"
+            if input_video.exists():
+                video_path = input_video
+            else:
+                for file in legacy_task_dir.iterdir():
+                    if file.is_file() and file.suffix.lower() in video_extensions:
+                        video_path = file
+                        break
 
     if not video_path:
         raise HTTPException(status_code=404, detail="视频文件不存在")
